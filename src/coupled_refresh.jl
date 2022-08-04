@@ -32,8 +32,8 @@ function coupled_next_refresh!(
     v₁ .-= x₁
     v₂ .-= x₂
 
-    v₁ ./= τ
-    v₂ ./= τ
+    v₁ /= τ
+    v₂ /= τ
 
     return τ, τ, coupled
 end
@@ -83,7 +83,7 @@ function reflection_maximal!(
     dim = size(m, 1)
 
     z = (m - μ) / σ
-    e = z ./ norm(z)
+    e = z / norm(z)
 
     n = MvNormal(dim, 1.0)
     ε = rand(n)
@@ -94,10 +94,11 @@ function reflection_maximal!(
     ℓₜ = logpdf(n, z)
 
     coupled::Bool = log_u < (ℓₜ - ℓₑ)
-    reflected_ε = coupled ? z : ε .- 2 (ε'e) e
+    # Reuse z for memory efficiency
+    z .= coupled ? z : ε .- 2 (ε'e) e
 
     @. res₁ = m + σ * ε
-    @. res₂ = μ + σ * reflected_ε
+    @. res₂ = μ + σ * z
 
     return coupled
 end
