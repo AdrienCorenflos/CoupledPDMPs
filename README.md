@@ -1,2 +1,2 @@
 # CoupledPDMPs
-A Julia package for coupling of some PDMPs (Bouncy particle sampler and coordinate sampler).
+A Julia package for coupling some PDMPs (Bouncy particle sampler, Boomerange sampler and Gaussian-refreshed ZigZag sampler).
