@@ -18,7 +18,7 @@ struct AffinePoisson{T<:Real} <: PoissonProcess
     AffinePoisson{T}(a::T, b::T, c::T) where {T<:Real} = new{T}(a, b, c)
 end
 
-function HomogeneousPoisson(a::T, b::T) where {T<:Real}
+function AffinePoisson(a::T, b::T) where {T<:Real}
     return AffinePoisson{T}(a, b, T(0.0))
 end
 
