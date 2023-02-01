@@ -25,7 +25,7 @@ end
 function AffinePoisson(a::T, b::T, c::T; check_args::Bool = true) where {T<:Real}
     @check_args AffinePoisson -Inf < a < Inf
     @check_args AffinePoisson -Inf < b < Inf
-    @check_args AffinePoisson 0.0 < c < Inf
+    @check_args AffinePoisson 0.0 <= c < Inf
     return AffinePoisson{T}(a, b, c)
 end
 ### Parameters

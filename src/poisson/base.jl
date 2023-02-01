@@ -1,5 +1,6 @@
 using Distributions
 using Random
+import Distributions: @check_args, logpdf, rand, rand!, insupport, cdf, quantile, minimum, maximum, partype
 
 abstract type PoissonProcess <: ContinuousUnivariateDistribution end
 
