@@ -95,7 +95,7 @@ function reflection_maximal!(
 
     coupled::Bool = log_u < (ℓₜ - ℓₑ)
     # Reuse z for memory efficiency
-    z .= coupled ? z : ε .- 2 (ε'e) e
+    z .= coupled ? z : ε .- 2(ε'e)e
 
     @. res₁ = m + σ * ε
     @. res₂ = μ + σ * z
