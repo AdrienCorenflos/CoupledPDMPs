@@ -1,4 +1,6 @@
 include("pdmp.jl")
+include("../poisson/homogeneous.jl")
+include("../generic_couplings/thorisson.jl")
 using CoupledPDMPs
 abstract type Coupledpdmp end
 
@@ -44,6 +46,11 @@ function CoupledBPS(sampler::BPS, x::Vector, v::Vector)
     return CoupledBPS(sampler, t1, x1, v1, t2, x2, v2, Δt, false, false, false)
 end
 
+function current_state(coupling::Coupledpdmp)
+
+    return coupling.t1, coupling.x1, coupling.v1, coupling.t2, coupling.x2, coupling.v2
+end
+
 
 function update(coupling::Coupledpdmp)
     
@@ -51,16 +58,17 @@ function update(coupling::Coupledpdmp)
 
     if(coupling.is_time_coupled && coupling.is_position_coupled && coupling.is_velocity_coupled)
         t1, x1, v1 = update(coupling.sampler, t1, x1, v1)
-        t2, x2, v2 = t1 -coupling.Δt, x1, v1
+        t2, x2, v2 = t1 - coupling.Δt, x1, v1
     else
         sampler = coupling.sampler
-        ∇U, ρ = sampler.∇U, sampler.ρ
-
-        grad1, grad2 = ∇U(x1), ∇U(x2)
-
-        coupling.is_time_coupled, τᵣ = coupling_exp(ρ, t2+coupling.Δt-t1)
-        τₑ = (bounce_thin(sampler, x1, v1, grad1), bounce_thin(sampler, x1, v1, grad2))
-
+        
+        refresh1, refresh2 = HomogeneousPoisson(sampler.ρ), HomogeneousPoisson(sampler.ρ, t2+coupling.Δt-t1)
+        
+        τᵣ¹, τᵣ², coupling.is_time_coupled = thorisson(refresh1, refresh2)
+        τᵣ² = τᵣ² - (t2+coupling.Δt-t1)
+        τₑ¹, τₑ²  = bounce_thin(sampler, x1, v1), bounce_thin(sampler, x1, v1)
+        
+        τᵣ, τₑ = [τᵣ¹, τᵣ²], [τₑ¹, τₑ²]
         τ = min.(τₑ, τᵣ)
 
         t1, t2 = t1+τ[1], t2+τ[2]
@@ -69,7 +77,7 @@ function update(coupling::Coupledpdmp)
         if( all(τᵣ .< τₑ) )
             if(coupling.is_time_coupled)
                 current_rng = copy(Random.default_rng())
-                coupled_next_refresh!(x1, x2, ρ, v1, v2)
+                coupled_next_refresh!(x1, x2, sampler.ρ, v1, v2)
                 copy!(Random.default_rng(), current_rng)
             else 
                 reflection_maximal!(fill(0.,size(v1)), fill(0.,size(v1)), 1., v1, v2)
@@ -77,8 +85,8 @@ function update(coupling::Coupledpdmp)
         else
             print("event")
             coupling.is_time_coupled = false
-            v1 = event_update!(sampler, x1, v1, τᵣ[1] < τₑ[1])
-            v2 = event_update!(sampler, x2, v2, τᵣ[2] < τₑ[2])
+            v1 = event_update(sampler, x1, v1, τᵣ[1] < τₑ[1])
+            v2 = event_update(sampler, x2, v2, τᵣ[2] < τₑ[2])
         end
             
         coupling.is_position_coupled = max(norm(x1 - x2)) < 1e-10

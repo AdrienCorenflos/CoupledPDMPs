@@ -36,14 +36,16 @@ function event_update(sampler::pdmp, x, v, refresh)
 end
 
 
-function bounce_thin(sampler::pdmp, x, v, grad)
+function bounce_thin(sampler::pdmp, x, v)
     event = false
-    a = v'*grad
+    a = v'*sampler.∇U(x)
     b = v'*sampler.H*v
     t = 0.
 
     while(!event)
-        τ = lin_bound(a, b)
+        #ap = AffinePoisson(a,b)
+
+        τ = lin_bound(a,b)
 
         t += τ
         x += v*τ
@@ -51,12 +53,16 @@ function bounce_thin(sampler::pdmp, x, v, grad)
 
         grad = sampler.∇U(x)
         event_rate = v'*grad
+        
+        if(event_rate / a > 1.05)
+            print("invalid rate")
+        end
 
         if( rand() < event_rate / a)
             x -= v*t
             event = true
         end
-        a = event_rate
+        b = event_rate
     end
     return(t)
 end
@@ -64,11 +70,9 @@ end
 
 function update(sampler::pdmp, t::Float64, x::Vector, v::Vector)
     
-    ∇U, ρ = sampler.∇U, sampler.ρ
+    ρ = sampler.ρ
 
-    grad = ∇U(x)
-
-    τₑ = bounce_thin(sampler, x, v, grad)
+    τₑ = bounce_thin(sampler, x, v)
     τᵣ = -log(rand())/ρ
 
     τ = min(τₑ, τᵣ)
