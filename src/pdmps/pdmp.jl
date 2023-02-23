@@ -1,87 +1,10 @@
-include("temp_poisson.jl")
-abstract type pdmp end
+include("../poisson/affine.jl")
+using LinearAlgebra: norm
 
-"""
-    BPS(∇U, H, \rho)
-
-Implementation of a BPS sampler. Given a gradient function ∇U, and H
-an upper bound on the Hessian run one event forward using the BPS sampler.
-
-# Examples
-```julia-repl
-julia> function ∇U(x::Vector)
-julia> x
-julia> end
-julia> H = [1 0; 0  1]
-julia> test = BPS(∇U, H, 1.)
-julia> update(test, 0., randn(2), randn(2))
-(0.5574, [0.3020, -0.8715], [1.0557, -1.1476])
-```
-"""
-
-struct BPS <: pdmp
-    ∇U::Function
-    H::Matrix
-    ρ::Float64
+struct PDMP
+    """ PDMP 
+    Give a function to initialise the sampler and set the one-step function
+    """
+    init::Function
+    onestep::Function
 end
-
-function event_update(sampler::pdmp, x, v, refresh)
-    if( !refresh )
-        g = sampler.∇U(x)
-        g = g / norm(g, 2)
-        v -=  2 * sum(g .* v) * g
-    else
-        v = randn(length(v))
-    end
-end
-
-
-function bounce_thin(sampler::pdmp, x, v)
-    event = false
-    a = v'*sampler.∇U(x)
-    b = v'*sampler.H*v
-    t = 0.
-
-    while(!event)
-        #ap = AffinePoisson(a,b)
-
-        τ = lin_bound(a,b)
-
-        t += τ
-        x += v*τ
-        a += b*τ
-
-        grad = sampler.∇U(x)
-        event_rate = v'*grad
-        
-        if(event_rate / a > 1.05)
-            print("invalid rate")
-        end
-
-        if( rand() < event_rate / a)
-            x -= v*t
-            event = true
-        end
-        b = event_rate
-    end
-    return(t)
-end
-
-
-function update(sampler::pdmp, t::Float64, x::Vector, v::Vector)
-    
-    ρ = sampler.ρ
-
-    τₑ = bounce_thin(sampler, x, v)
-    τᵣ = -log(rand())/ρ
-
-    τ = min(τₑ, τᵣ)
-
-    t += τ
-    x += v*τ
-
-    v = event_update(sampler, x, v, τᵣ < τₑ)
-    
-    return (t, x, v)
-end
-
