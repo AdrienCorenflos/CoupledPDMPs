@@ -8,11 +8,18 @@ struct BPSinfo
     refresh::Bool
 end
 
+
+"""
+State of the Bouncy Particle Sampler
+
+Additional information regarding the thinning procedure is stored for efficiency.
+
+# Fields
+- `skeleton::Skeleton`: The skeleton of the PDMP
+- `thin_prop::AffinePoisson`: The thinning proposal
+- `refresh::HomogeneousPoisson`: The refreshment proposal
+"""
 struct BPSstate
-    """ State of the BPS
-    The BPS algo takes a position and returns the next thinned event.
-    To improve computation on the bounce and thinning additional info is stored
-    """
     skeleton::Skeleton
     thin_prop::AffinePoisson
     refresh::HomogeneousPoisson

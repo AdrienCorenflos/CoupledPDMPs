@@ -24,7 +24,7 @@ function coupled_next_refresh!(
     λ::F,
     v₁::AbstractVector{F},
     v₂::AbstractVector{F},
-) where {F<:Real}
+) where {F<:AbstractFloat}
 
     τ = rand(Exponential()) / λ
     coupled = reflection_maximal!(x₁, x₂, τ, v₁, v₂)
@@ -50,7 +50,7 @@ function coupled_next_refresh(
     x₁::AbstractVector{F},
     x₂::AbstractVector{F},
     λ::F,
-) where {F<:Real}
+) where {F<:AbstractFloat}
     v₁, v₂ = similar(x₁), similar(x₂)
     τ₁, τ₂, coupled = coupled_next_refresh!(x₁, x₂, λ, v₁, v₂)
     return v₁, v₂, τ₁, τ₂, coupled
@@ -79,7 +79,7 @@ function reflection_maximal!(
     σ::F,
     res₁::AbstractVector{F},
     res₂::AbstractVector{F},
-) where {F<:Real}
+) where {F<:AbstractFloat}
     dim = size(m, 1)
 
     z = (m - μ) / σ
@@ -115,7 +115,7 @@ function reflection_maximal(
     m::AbstractVector{F},
     μ::AbstractVector{F},
     σ::F,
-) where {F<:Real}
+) where {F<:AbstractFloat}
     x, y = similar(m), similar(μ)
     cond = reflection_maximal!(m, μ, σ, x, y)
     return x, y, cond

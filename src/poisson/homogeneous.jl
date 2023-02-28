@@ -36,3 +36,4 @@ quantile(d::HomogeneousPoisson, p::Real) = quantile(d.exp, p) + d.shift
 minimum(d::HomogeneousPoisson) = d.shift
 maximum(d::HomogeneousPoisson) = Inf
 insupport(d::HomogeneousPoisson, x::Real) = insupport(d.exp, x-d.shift)
+rate(d::HomogeneousPoisson, t) = d.exp.λ

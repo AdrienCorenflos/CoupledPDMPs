@@ -12,18 +12,18 @@ PP(t; \\lambda) = \\lambda(t) \\exp(-\\int_{0}^t\\lambda(s)\\mathrm{d}s), \\quad
 AffinePoisson(a, b)  # Affine Poisson process with λ(t) = c + (a*t + b)₊
 ```
 """
-struct AffinePoisson{T<:Real} <: PoissonProcess
+struct AffinePoisson{T<:AbstractFloat} <: PoissonProcess
     a::T
     b::T
     c::T
-    AffinePoisson{T}(a::T, b::T, c::T) where {T<:Real} = new{T}(a, b, c)
+    AffinePoisson{T}(a::T, b::T, c::T) where {T<:AbstractFloat} = new{T}(a, b, c)
 end
 
-function AffinePoisson(a::T, b::T) where {T<:Real}
+function AffinePoisson(a::T, b::T) where {T<:AbstractFloat}
     return AffinePoisson{T}(a, b, T(0.0))
 end
 
-function AffinePoisson(a::T, b::T, c::T; check_args::Bool = true) where {T<:Real}
+function AffinePoisson(a::T, b::T, c::T; check_args::Bool = true) where {T<:AbstractFloat}
     @check_args AffinePoisson -Inf < a < Inf
     @check_args AffinePoisson -Inf < b < Inf
     @check_args AffinePoisson 0.0 <= c < Inf
@@ -33,7 +33,7 @@ end
 partype(::AffinePoisson{T}) where {T} = T
 
 ### Methods
-function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T}
+function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T<:AbstractFloat}
     # See ...
     a, b, c = d.a, d.b, d.c
 
@@ -76,7 +76,7 @@ function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T}
 end
 
 
-function logpdf(d::AffinePoisson, x::Real)
+function logpdf(d::AffinePoisson{T}, x::T) where {T <: AbstractFloat}
 
     a, b, c = d.a, d.b, d.c
 
@@ -127,4 +127,4 @@ function logpdf(d::AffinePoisson, x::Real)
     end
 end
 
-rate(d::AffinePoisson, t::Real) = maximum(d.a * t + d.b, 0) + d.c
+rate(d::AffinePoisson, t) = maximum(d.a * t + d.b, 0) + d.c
