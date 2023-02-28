@@ -8,6 +8,8 @@ function ∇U(x::Vector)
 end
 
 H = [1 0; 0  1]
+
+Random.seed!(123456)
 sampler = BPS(∇U, H, .5)
 x_current = randn(2)
 state = sampler.init(x_current)
@@ -24,9 +26,10 @@ function sample_pdmp(kernel, state, N)
 end
 
 function get_x(state::BPSstate)
-    state.x
+    state.skeleton.x
 end
 
+Random.seed!(123456)
 samples = sample_pdmp(sampler.onestep, state, 10_000)
 samples_x = hcat(get_x.(samples)...)'
 

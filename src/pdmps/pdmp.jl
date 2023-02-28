@@ -1,4 +1,5 @@
 include("../poisson/affine.jl")
+include("../poisson/homogeneous.jl")
 using LinearAlgebra: norm
 
 struct PDMP
@@ -8,3 +9,19 @@ struct PDMP
     init::Function
     onestep::Function
 end
+
+struct COUPLEDPDMP
+    """ COUPLEDPDMP 
+    More general allows for coupling.
+    """
+    init::Function
+    onestep::Function
+    onestep_couple::Function
+end
+
+struct Skeleton
+    t::Float64
+    x::Vector
+    v::Vector
+end 
+
