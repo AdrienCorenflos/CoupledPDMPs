@@ -36,6 +36,11 @@ partype(::AffinePoisson{T}) where {T} = T
 function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T}
     # See ...
     a, b, c = d.a, d.b, d.c
+
+    if c <= 0.0
+        throw(ArgumentError("AffinePoisson: c must be positive."))
+    end
+
     logᵤ = log(rand(rng, T))
 
     if isapprox(a, 0., atol=1e-10) # λ = (b)₊ + c
@@ -66,6 +71,9 @@ function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T}
         return -(b+c)/a + sqrt(((b+c)/a)^2 - 2*logᵤ/a)
         
     else # λ = c
+        if c <= 0.0
+            throw(ArgumentError("AffinePoisson: c must be positive if a = b = 0."))
+        end
         return -logᵤ/c
     end
 
@@ -75,6 +83,7 @@ end
 function logpdf(d::AffinePoisson, x::Real)
     
     a, b, c = d.a, d.b, d.c
+
     if x < 0.0
         return -Inf
     elseif isapprox(a, 0.0, atol = 1e-10)
@@ -113,6 +122,9 @@ function logpdf(d::AffinePoisson, x::Real)
 
     else
         # λ = c
+        if c <= 0.0
+            throw(ArgumentError("AffinePoisson: c must be positive if a = b = 0."))
+        end
         return log(c) - c*x 
     end
 end

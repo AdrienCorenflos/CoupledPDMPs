@@ -1,4 +1,5 @@
 include("../src/generic_couplings/thorisson.jl")
+include("../src/poisson/affine.jl")
 using Random
 using Statistics
 using Test
@@ -21,6 +22,4 @@ using Test
     @test mean(coupled) > 0
     @test all(res₁[coupled] .== res₂[coupled])
     @test ~all(res₁[.~coupled] .== res₂[.~coupled])
-
-
 end
