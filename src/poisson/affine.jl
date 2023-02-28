@@ -37,96 +37,94 @@ function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T}
     # See ...
     a, b, c = d.a, d.b, d.c
 
-    if c <= 0.0
-        throw(ArgumentError("AffinePoisson: c must be positive."))
-    end
-
     logᵤ = log(rand(rng, T))
 
-    if isapprox(a, 0., atol=1e-10) # λ = (b)₊ + c
-        return -logᵤ/(max(0.,b)+c)
+    if isapprox(a, 0.0, atol = 1e-10) # λ = (b)₊ + c
+        return -logᵤ / (max(0.0, b) + c)
 
-    elseif (b < 0.) & (a > 0.)    
-        t₀ = -logᵤ/c
-        if t₀ < -b/a
+    elseif (b < 0.0) & (a > 0.0)
+        t₀ = -logᵤ / c
+        if t₀ < -b / a
             # λ = c on (0,-b/a)      
             return t₀
-        else 
+        else
             # λ = (at+b)₊ + c on (-b/a, t) -> λ = (at)₊ + c on (0, t)
-            logᵤ = logᵤ + b*c/a 
-            return -b/a - c/a + sqrt((c/a)^2 - 2*logᵤ/a)
+            logᵤ += b * c / a
+            return -b / a - c / a + sqrt((c / a)^2 - 2 * logᵤ / a)
         end
 
-    elseif (b > 0.) & (a < 0.)
+    elseif (b > 0.0) & (a < 0.0)
 
-        if -b^2/a + b^2/(2*a) >= -logᵤ + c*(b/a)
+        if -b^2 / a + b^2 / (2 * a) >= -logᵤ + c * (b / a)
             # λ = at+(b+c) on (0, -b/a)
-            return -(b+c)/a -sqrt(((b+c)/a)^2 - 2*logᵤ/a)
-        else 
-            logᵤ = logᵤ - c*(b/a)
-            return -b/a + -logᵤ/c
+            return -(b + c) / a - sqrt(((b + c) / a)^2 - 2 * logᵤ / a)
+        else
+            logᵤ -= c * (b / a)
+            return -b / a + -logᵤ / c
         end
 
-    elseif (a > 0.) & (b > 0.) # λ = at+(b+c) 
-        return -(b+c)/a + sqrt(((b+c)/a)^2 - 2*logᵤ/a)
-        
+    elseif (a > 0.0) & (b > 0.0) # λ = at+(b+c) 
+        return -(b + c) / a + sqrt(((b + c) / a)^2 - 2 * logᵤ / a)
+
     else # λ = c
         if c <= 0.0
             throw(ArgumentError("AffinePoisson: c must be positive if a = b = 0."))
         end
-        return -logᵤ/c
+        return -logᵤ / c
     end
 
 end
 
 
 function logpdf(d::AffinePoisson, x::Real)
-    
+
     a, b, c = d.a, d.b, d.c
 
     if x < 0.0
         return -Inf
     elseif isapprox(a, 0.0, atol = 1e-10)
         # λ = (b)₊ + c 
-        return log(max(0.,b) + c) - (max(0.,b) + c) * x
+        return log(max(0.0, b) + c) - (max(0.0, b) + c) * x
 
-    elseif (b < 0.) & (a > 0.)    
+    elseif (b < 0.0) & (a > 0.0)
         # log Norm constant
-        lnc = 0.5*log(pi/(2*a)) + (b+c)^2/(2*a) +log(1-erf(c/sqrt(2*a)))
-        lnc = log(exp(lnc) +1/c-exp(c*b/a)/c )  # (0, -b/a)
+        lnc = 0.5 * log(pi / (2 * a)) + (b + c)^2 / (2 * a) + log(1 - erf(c / sqrt(2 * a)))
+        lnc = log(exp(lnc) + 1 / c - exp(c * b / a) / c)  # (0, -b/a)
 
-        if x < -b/a
+        if x < -b / a
             # λ = c on (0,-b/a)      
-            return -c*x - lnc
-        else 
+            return -c * x - lnc
+        else
             # λ = (at+b) + c on (-b/a, t)
-            return -(a*x^2/2 +b*x + c*x) - lnc
+            return -(a * x^2 / 2 + b * x + c * x) - lnc
         end
 
-    elseif (b > 0.) & (a < 0.)
+    elseif (b > 0.0) & (a < 0.0)
         # log Norm constant
-        lnc = sqrt(pi/abs(2*a))*exp((b+c)^2/(2*a))*(erfi((b+c)/sqrt(2*abs(a))) -erfi(c/sqrt(2*abs(a))))# (0,-b/a)
-        lnc = log(lnc + exp(c*b/a)/c ) # (-b/a, inf)
+        lnc =
+            sqrt(pi / abs(2 * a)) *
+            exp((b + c)^2 / (2 * a)) *
+            (erfi((b + c) / sqrt(2 * abs(a))) - erfi(c / sqrt(2 * abs(a))))# (0,-b/a)
+        lnc = log(lnc + exp(c * b / a) / c) # (-b/a, inf)
 
-        if x < -b/a
+        if x < -b / a
             # λ = at+(b+c) on (0, -b/a)
-            return -(a*x^2/2 +b*x + c*x) - lnc
-        else 
+            return -(a * x^2 / 2 + b * x + c * x) - lnc
+        else
             # λ = c on (-b/a, inf)
-            return -c*x - lnc
+            return -c * x - lnc
         end
 
-    elseif (a > 0.) & (b > 0.) # λ = at+(b+c) 
-        lnc = sqrt(pi/(2*a))*exp((b+c)^2/(2*a))*erfc((b+c)/sqrt(2*abs(a)))
-        return -(a*x^2/2 +b*x + c*x) - lnc
+    elseif (a > 0.0) & (b > 0.0) # λ = at+(b+c) 
+        return log(a * x + b + c) - (a * x^2 / 2 + (b + c) * x)
 
     else
         # λ = c
         if c <= 0.0
             throw(ArgumentError("AffinePoisson: c must be positive if a = b = 0."))
         end
-        return log(c) - c*x 
+        return log(c) - c * x
     end
 end
-    
+
 rate(d::AffinePoisson, t::Real) = maximum(d.a * t + d.b, 0) + d.c

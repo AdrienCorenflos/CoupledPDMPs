@@ -4,16 +4,19 @@ using Statistics
 using Test
 using QuadGK
 using KernelDensity
+using Plots
+
+
 
 @testset "Constant affine rate is homogeneous." begin
-    a, b, c = 0., 0.1, 0.
-    b = 0.1
+    Random.seed!(1234)
+    a, b, c = 0., 0.1, 0.3
     d = AffinePoisson(a, b, c)
     N = 100_000
     res = zeros(Float64, N)
     rand!(d,res)
-    @test mean(res) ≈ 1 / b atol = 1e-2 rtol = 1e-2
-    @test std(res) ≈ 1 / b atol = 1e-2 rtol = 1e-2
+    @test mean(res) ≈ 1 / (b + c) atol = 1e-2 rtol = 1e-2
+    @test std(res) ≈ 1 / (b + c) atol = 1e-2 rtol = 1e-2
     
 end
 
@@ -25,6 +28,10 @@ function test_one(a, b, c, res)
     kde_res = kde(res, boundary=(0, kde_max),  npoints = 2^15) 
     x_vals = kde_res.x
     est_lpdf = log.(kde_res.density)
+
+    # plot(x_vals, est_lpdf, label = "Estimated")
+    # plot!(x_vals, logpdf.(d, x_vals), label = "True")
+    # savefig("affine $a $b $c.png")
 
     @testset "Pdf integrates to 1: $a, $b, $c" begin
         int = quadgk(x -> exp(logpdf(d, x)), 0, Inf)[1]
