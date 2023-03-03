@@ -1,4 +1,4 @@
-include("../src/pdmps/BPS.jl")
+include("../src/pdmps/BPS_Efficient.jl")
 using Random
 using Test
 using Plots: plot, plot!
@@ -20,7 +20,7 @@ function sample_pdmp(kernel, state, N)
     states = Vector{typeof(state)}(undef, N)
     states[1] = state
     for i in 1:(N-1)
-        states[i+1], _ = kernel(states[i])
+        states[i+1] = kernel(states[i])
     end
     return states
 end

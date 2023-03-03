@@ -1,4 +1,4 @@
-include("../src/pdmps/BPScoupling.jl")
+include("../src/pdmps/BPSEfficientcoupling.jl")
 include("../src/generic_couplings/thorisson.jl")
 using Random
 using CoupledPDMPs
@@ -10,7 +10,7 @@ function ∇U(x::Vector)
 end
 
 H = [1 0; 0  1]
-sampler = BPS_coupling(∇U, H, .5)
+sampler = BPS_coupling(∇U, H, 1.)
 
 Random.seed!(1)
 x1 = randn(2); x2 = randn(2)
@@ -35,13 +35,20 @@ function get_x2(cstate::BPScoupledstate)
     cstate.state2.skeleton.x
 end
 
-
-samples = sample_coupledpdmp(sampler.onestep_couple, coupledstate, 500)
-
+samples = sample_coupledpdmp(sampler.onestep_couple, coupledstate, 1000)
 
 samples_x1 = hcat(get_x1.(samples)...)'
 samples_x2 = hcat(get_x2.(samples)...)'
 
-plot(samples_x1[:,1], samples_x1[:,2])
-plot(samples_x2[:,1], samples_x2[:,2])
-plot!(samples_x2[:,1], samples_x2[:,2])
+#plot(samples_x1[:,1], samples_x1[:,2])
+#plot!(samples_x2[:,1], samples_x2[:,2])
+
+function get_t1(cstate::BPScoupledstate)
+    cstate.state1.skeleton.t
+end
+function get_t2(cstate::BPScoupledstate)
+    cstate.state2.skeleton.t
+end
+
+plot(get_t1.(samples), samples_x1[:,1])
+plot!(get_t2.(samples), samples_x2[:,1])

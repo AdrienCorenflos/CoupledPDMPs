@@ -16,69 +16,74 @@ struct AffinePoisson{T<:AbstractFloat} <: PoissonProcess
     a::T
     b::T
     c::T
-    AffinePoisson{T}(a::T, b::T, c::T) where {T<:AbstractFloat} = new{T}(a, b, c)
+    shift::T
+    AffinePoisson{T}(a::T, b::T, c::T, shift::T) where {T<:Real} = new{T}(a, b, c, shift)
 end
 
-function AffinePoisson(a::T, b::T) where {T<:AbstractFloat}
-    return AffinePoisson{T}(a, b, T(0.0))
+function AffinePoisson(a::T, b::T) where {T<:Real}
+    return AffinePoisson{T}(a, b, T(0.0), T(0.0))
 end
 
-function AffinePoisson(a::T, b::T, c::T; check_args::Bool = true) where {T<:AbstractFloat}
+function AffinePoisson(a::T, b::T, c::T) where {T<:Real}
+    return AffinePoisson{T}(a, b, c, T(0.0))
+end
+
+function AffinePoisson(a::T, b::T, c::T, shift::T; check_args::Bool = true) where {T<:Real}
     @check_args AffinePoisson -Inf < a < Inf
     @check_args AffinePoisson -Inf < b < Inf
     @check_args AffinePoisson 0.0 <= c < Inf
-    return AffinePoisson{T}(a, b, c)
+    @check_args AffinePoisson -Inf <= shift < Inf
+    return AffinePoisson{T}(a, b, c, shift)
 end
+
 ### Parameters
 partype(::AffinePoisson{T}) where {T} = T
 
 ### Methods
 function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T<:AbstractFloat}
     # See ...
-    a, b, c = d.a, d.b, d.c
-
+    a, b, c, shift = d.a, d.b, d.c, d.shift
     logᵤ = log(rand(rng, T))
 
-    if isapprox(a, 0.0, atol = 1e-10) # λ = (b)₊ + c
-        return -logᵤ / (max(0.0, b) + c)
+    if isapprox(a, 0., atol=1e-10) # λ = (b)₊ + c
+        return shift-logᵤ/(max(0.,b)+c)
 
     elseif (b < 0.0) & (a > 0.0)
-        t₀ = -logᵤ / c
-        if t₀ < -b / a
+        t₀ = -b/a
+        t₁ = -logᵤ / c
+
+        if t₁ < t₀ 
             # λ = c on (0,-b/a)      
-            return t₀
-        else
+            return shift + t₁
+        else 
             # λ = (at+b)₊ + c on (-b/a, t) -> λ = (at)₊ + c on (0, t)
-            logᵤ += b * c / a
-            return -b / a - c / a + sqrt((c / a)^2 - 2 * logᵤ / a)
+            t₂ = (-a * (b + c) + sqrt(a^2*(c^2-2*a*logᵤ+2*a*c*(b/a))))/a^2
+            return shift + t₂
         end
 
     elseif (b > 0.0) & (a < 0.0)
-
-        if -b^2 / a + b^2 / (2 * a) >= -logᵤ + c * (b / a)
+        t₀ = -b/a
+        if a*t₀^2/2.0+(b+c)*t₀ <= -logᵤ 
+            return shift + (b^2/(2*a) - logᵤ)/c
+        else 
             # λ = at+(b+c) on (0, -b/a)
-            return -(b + c) / a - sqrt(((b + c) / a)^2 - 2 * logᵤ / a)
-        else
-            logᵤ -= c * (b / a)
-            return -b / a + -logᵤ / c
+            return shift -(b+c)/a -sqrt((b+c)^2/a^2 - 2*logᵤ/a)
         end
 
-    elseif (a > 0.0) & (b > 0.0) # λ = at+(b+c) 
-        return -(b + c) / a + sqrt(((b + c) / a)^2 - 2 * logᵤ / a)
-
+    elseif (a > 0.) & (b > 0.) # λ = at+(b+c) 
+        return shift -(b+c)/a + sqrt(((b+c)/a)^2 - 2*logᵤ/a)
+        
     else # λ = c
-        if c <= 0.0
-            throw(ArgumentError("AffinePoisson: c must be positive if a = b = 0."))
-        end
-        return -logᵤ / c
+        return shift -logᵤ/c
     end
 
 end
 
 
-function logpdf(d::AffinePoisson{T}, x::T) where {T <: AbstractFloat}
-
-    a, b, c = d.a, d.b, d.c
+function logpdf(d::AffinePoisson, x::Real)
+    
+    a, b, c, shift = d.a, d.b, d.c, d.shift
+    x = x - shift
 
     if x < 0.0
         return -Inf
@@ -86,33 +91,36 @@ function logpdf(d::AffinePoisson{T}, x::T) where {T <: AbstractFloat}
         # λ = (b)₊ + c 
         return log(max(0.0, b) + c) - (max(0.0, b) + c) * x
 
-    elseif (b < 0.0) & (a > 0.0)
+    elseif (b < 0.0) & (a > 0.0) 
         # log Norm constant
-        lnc = 0.5 * log(pi / (2 * a)) + (b + c)^2 / (2 * a) + log(1 - erf(c / sqrt(2 * a)))
-        lnc = log(exp(lnc) + 1 / c - exp(c * b / a) / c)  # (0, -b/a)
+        lnc = log( 1.0 + 1.0 - exp(c * b / a) )  
 
         if x < -b / a
             # λ = c on (0,-b/a)      
-            return -c * x - lnc
+            return log(c) - c * x - lnc
         else
             # λ = (at+b) + c on (-b/a, t)
-            return -(a * x^2 / 2 + b * x + c * x) - lnc
+            return log(a*x+b+c)-(a * x^2 / 2 + b * x + c * x + b*c/a+ b^2/(2*a)) - lnc
         end
 
-    elseif (b > 0.0) & (a < 0.0)
+    elseif (b > 0.0) & (a < 0.0) # Issue
         # log Norm constant
-        lnc =
-            sqrt(pi / abs(2 * a)) *
-            exp((b + c)^2 / (2 * a)) *
-            (erfi((b + c) / sqrt(2 * abs(a))) - erfi(c / sqrt(2 * abs(a))))# (0,-b/a)
-        lnc = log(lnc + exp(c * b / a) / c) # (-b/a, inf)
+        int1 =  erf((b + c)*im / sqrt(2 * -a))*im - erf(c*im / sqrt(2 * abs(a)))*im
+        int2 = exp((b+c)^2/(2*a))
+        int3 = 2.0*Complex(a)^(3.0/2.0)
+
+        nc = -a *(
+            exp(b*(b+2*c)/(2*a))/a - 1/a -sqrt(2*pi)*erf((b+c)/sqrt(Complex(a)*2))*int2*(b+c)/int3+sqrt(2*pi)*erf(c/sqrt(2*Complex(a)))*int2*(b+c)/int3) -
+            b*sqrt(pi/(-2*a))*int2*int1-c*sqrt(pi/(-2*a))*int2*int1
+        
+        lnc = log(real(nc) + exp(c * b / a + b^2/(2*a))) # (-b/a, inf)
 
         if x < -b / a
             # λ = at+(b+c) on (0, -b/a)
-            return -(a * x^2 / 2 + b * x + c * x) - lnc
+            return log(a*x+b+c) - (a * x^2 / 2 + b * x + c * x) - lnc
         else
             # λ = c on (-b/a, inf)
-            return -c * x - lnc
+            return log(c) -c * x +b^2/(2*a) - lnc
         end
 
     elseif (a > 0.0) & (b > 0.0) # λ = at+(b+c) 
@@ -126,5 +134,4 @@ function logpdf(d::AffinePoisson{T}, x::T) where {T <: AbstractFloat}
         return log(c) - c * x
     end
 end
-
-rate(d::AffinePoisson, t) = maximum(d.a * t + d.b, 0) + d.c
+rate(d::AffinePoisson, t::Real) = max(d.a * t + d.b, 0.) + d.c

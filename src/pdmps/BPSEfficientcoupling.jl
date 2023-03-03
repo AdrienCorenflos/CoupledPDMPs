@@ -1,4 +1,4 @@
-include("BPS.jl")
+include("BPS_Efficient.jl")
 
 struct BPScoupledstate
     """ State of the BPS
@@ -16,23 +16,33 @@ function rand(state::BPScoupledstate)
     Return next time and if refreshment event
     """
     state1, state2 = state.state1, state.state2
-    ref_τ1, ref_τ2, coupled_time = thorisson(state1.refresh, state2.refresh)
-    ref_τ2 = ref_τ2 - state2.refresh.shift
+    λᵣ = state1.thinning.c                         # Assumes the same ref rate for both
 
-    ev_τ1, ev_τ2 = rand(state1.thin_prop), rand(state2.thin_prop) # Currently don't couple on Bounce...
+    τ1, τ2, coupled_time = thorisson(state1.thinning, state2.thinning)
+    λ1, λ2 = rate(state1.thinning, τ1), rate(state2.thinning, τ2)
+    τ2 = τ2 - state2.thinning.shift
 
-    τ1, τ2 = min(ref_τ1, ev_τ1), min(ref_τ2, ev_τ2)
-    refresh1, refresh2 = τ1 < ev_τ1, τ2 < ev_τ2
+    refresh1, refresh2, coupled = thorisson(Bernoulli(λᵣ/λ1), Bernoulli(λᵣ/λ2)) # Lazy coupling
 
     return coupled_time, refresh1, refresh2, τ1, τ2
 end
 
+function move_ΔtN(skel::Skeleton, Δt, N)
+    skel_vec = Vector{Skeleton}(undef, N)
+    for i in 1:N
+        skel = Skeleton(skel.t+Δt, skel.x+Δt*skel.v, skel.v)
+        skel_vec[i] = skel
+    end
+    return skel_vec, skel.t
+end
+
 function update_states(state::BPScoupledstate, τ1, τ2)
     """ Evolve the state by tau assuming no event
+    In future return h evaluated at Delta along the trajectory
     """
-    skel1 = state.state1.skeleton
-    skel2 = state.state2.skeleton
-
+    Δt = state.Δt
+    skel1, skel2 = state.state1.skeleton, state.state2.skeleton
+        
     x1 = skel1.x + τ1*skel1.v; x2 = skel2.x + τ2*skel2.v
     v1 = skel1.v; v2 = skel2.v
     t1 = skel1.t + τ1; t2 = skel2.t + τ2
@@ -49,7 +59,7 @@ function BPS_coupling(∇U::Function, H::Matrix, λᵣ::Float64)
             event = true
         else
             λ = v'*grad
-            λᵤ = rate(thin, τ)
+            λᵤ = rate(thin, τ) - λᵣ
             if(λᵤ < λ -1e-10)
                 println("---------------------------")
                 println("Error in thinning")
@@ -57,12 +67,12 @@ function BPS_coupling(∇U::Function, H::Matrix, λᵣ::Float64)
                 println("---------------------------")
             end
 
-            if(rand(rng)*λᵤ <= λ)
+            if(rand()*λᵤ <= λ)
                 bounce!(v, grad)
                 a, b = v'*H*v, -λ
                 event = true
             else
-                a, b = state.thin_prop.a, λ
+                a, b = thin.a, λ
                 event = false
             end
         end
@@ -73,8 +83,7 @@ function BPS_coupling(∇U::Function, H::Matrix, λᵣ::Float64)
         Δt = coupledstate.Δt
 
         coupled_time, refresh1, refresh2, τ1, τ2 = rand(coupledstate)
-        println( (τ1, τ2, coupled_time) )
-        
+                
         t1, x1, v1, t2, x2, v2 = update_states(coupledstate, τ1, τ2)
         
         grad1 = ∇U(x1); grad2 = ∇U(x2)
@@ -93,15 +102,15 @@ function BPS_coupling(∇U::Function, H::Matrix, λᵣ::Float64)
             b1 = v1'*grad1; b2 = v2'*grad2 
             event1 = true; event2 = true
         else
-            a1, b1, event1 = bps_internal!(rng,refresh1,v1,grad1,coupledstate.state1.thin_prop,τ1)
-            a2, b2, event2 = bps_internal!(current_rng,refresh2,v2,grad2,coupledstate.state2.thin_prop,τ2)
+            a1, b1, event1 = bps_internal!(rng,refresh1,v1,grad1,coupledstate.state1.thinning,τ1)
+            a2, b2, event2 = bps_internal!(current_rng,refresh2,v2,grad2,coupledstate.state2.thinning,τ2)
         end
 
         newskeleton1 = Skeleton(t1, x1, v1)
-        newstate1 = BPSstate(newskeleton1, AffinePoisson(a1,b1), HomogeneousPoisson(λᵣ))
+        newstate1 = BPSstate(newskeleton1, AffinePoisson(a1,b1,λᵣ))
 
         newskeleton2 = Skeleton(t2, x2, v2)
-        newstate2 = BPSstate(newskeleton2, AffinePoisson(a2,b2), HomogeneousPoisson(λᵣ, t2+Δt-t1))
+        newstate2 = BPSstate(newskeleton2, AffinePoisson(a2,b2,λᵣ, t2+Δt-t1))
 
         coupled = (sum(abs.(x1.-x2)) < 1e-10) & (sum(abs.(v1.-v2)) < 1e-10) & (t1 - Δt - t2  < 1e-10)
         
@@ -119,7 +128,7 @@ function BPS_coupling(∇U::Function, H::Matrix, λᵣ::Float64)
         b = velocity'*grad
 
         newskeleton = Skeleton(0., position, velocity)
-        return BPSstate(newskeleton, AffinePoisson(a,b), HomogeneousPoisson(λᵣ))
+        return BPSstate(newskeleton, AffinePoisson(a,b,λᵣ))
     end
 
     function kernel(state::BPSstate)
@@ -130,10 +139,10 @@ function BPS_coupling(∇U::Function, H::Matrix, λᵣ::Float64)
         t += τ
 
         rng = Random.default_rng()
-        a, b, event = bps_internal!(rng,refresh, v, ∇U(x), state.thin_prop, τ)
+        a, b, event = bps_internal!(rng,refresh, v, ∇U(x), state.thinning, τ)
 
         newskeleton = Skeleton(t, x, v)
-        newstate = BPSstate(newskeleton, AffinePoisson(a,b), HomogeneousPoisson(λᵣ))
+        newstate = BPSstate(newskeleton, AffinePoisson(a,b,λᵣ))
 
         return newstate
     end
