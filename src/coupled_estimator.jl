@@ -58,42 +58,50 @@ function rhee_glynn(
     k::Int,
     m::Int,
     return_classical_estimator::Bool = false,
-) where {S}
-    if ~(1 <= k <= m)
+)
+    if ~(0 <= k <= m)
         throw(ArgumentError("k must be in [1, m]"))
     end
 
     den = m - k
-
+    coupling_time = Inf
     # burnin
     for i in 1:k
         coupled_state = coupled_kernel(coupled_state)
+        if coupled_state.coupled
+            coupling_time = min(i, coupling_time)
+        end
     end
 
-    i_km = coupled_state.state1.h   # classical estimator
+    i_km = map(x -> x / den, coupled_state.state_1.h)   # classical estimator
     b_k = map(x -> 0.0 * x, i_km)   # bias correction
 
-    i = k + 1
+    i = k
     coupled = coupled_state.coupled
     while i < m || ~coupled
         coupled_state = coupled_kernel(coupled_state)
+        h_1, h_2 = coupled_state.state_1.h, coupled_state.state_2.h
+
         coupled = coupled_state.coupled
+        if coupled
+            coupling_time = min(i, coupling_time)
+        end
         if ~coupled
             factor = min(1, (i + 1 - k) / den)
-            b_k = map(u, v, w -> u + factor * (v - w), b_km, coupled_state.state1.h, coupled_state.state2.h)
+            b_k = map((u, v, w) -> (u + factor * (v - w)), b_k, h_1, h_2)
         end
         if i < m
-            i_km = map(u, v -> u + v / den, i_km, coupled_state.state1.h)
+            i_km = map((u, v) -> (u + v / den), i_km, h_1)
         end
         i += 1
     end
 
-    h_km = map(u, v -> u + v, i_km, b_k)
+    h_km = map((u, v) -> u + v, i_km, b_k)
 
     if return_classical_estimator
-        return h_km, b_k
+        return coupling_time, h_km, i_km
     else
-        return h_km
+        return coupling_time, h_km
     end
 
 end
