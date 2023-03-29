@@ -48,24 +48,25 @@ end
     N = 1_000_000
     res = zeros(Float64, N)
 
-    a, b, c = 1., 0.5, 0.1
-    test_one(a, b, c, res)
+    a, b, c, shift = 1., 0.5, 0.1, -1.
+    test_one(a, b, c, shift, res)
+    a, b, c, shift = 1., -0.5, .1, -1.
+    test_one(a, b, c, shift, res)
 
-    a, b, c = 1., -0.5, 0.1
-    test_one(a, b, c, res)
+    a, b, c, shift = 3., -2., 1., 1.
+    test_one(a, b, c, shift, res)
+    a, b, c, shift = -3., 2., 2., 1.
+    test_one(a, b, c, shift, res)
 
-    a, b, c = -1., 0.5, 0.1
-    test_one(a, b, c, res)
+    a, b, c, shift = -1., -0.5, 0.1, 1.
+    test_one(a, b, c, shift, res)
 
-    a, b, c = -1., -0.5, 0.1
-    test_one(a, b, c, res)
+    a, b, c, shift = 0., 0.5, 0.1, 1.
+    test_one(a, b, c, shift, res)
 
-    a, b, c = 0., 0.5, 0.1
-    test_one(a, b, c, res)
+    a, b, c, shift = 0., -0.5, 0.1, 1.
+    test_one(a, b, c, shift, res)
 
-    a, b, c = 0., -0.5, 0.1
-    test_one(a, b, c, res)
-
-    a, b, c = 0., 0., 0.1
-    test_one(a, b, c, res)
+    a, b, c, shift = 0., 0., 0.1, 1.
+    test_one(a, b, c, shift, res)
 end

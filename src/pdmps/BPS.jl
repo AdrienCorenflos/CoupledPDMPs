@@ -1,14 +1,5 @@
 include("pdmp.jl")
 
-struct BPSinfo
-    """ Info on the BPS thinning event
-    Store any info on the current state of BPS
-    """
-    event::Bool
-    refresh::Bool
-end
-
-
 """
 State of the Bouncy Particle Sampler
 
@@ -16,22 +7,55 @@ Additional information regarding the thinning procedure is stored for efficiency
 
 # Fields
 - `skeleton::Skeleton`: The skeleton of the PDMP
-- `thin_prop::AffinePoisson`: The thinning proposal
-- `refresh::HomogeneousPoisson`: The refreshment proposal
+- `thinning::AffinePoisson`: The proposal for thinning 
 """
 struct BPSstate
     skeleton::Skeleton
-    thin_prop::AffinePoisson
-    refresh::HomogeneousPoisson
+    thinning::AffinePoisson
+end
+
+struct BPSDiscreteState
+    current::Skeleton
+    event_vec::Vector{BPSstate}
+    h::Any
 end
 
 function rand(state::BPSstate)
-    """ Make a thinnign proposal
-    Return next time and if refreshment event
+    """ Make a proposal
+    Return if refreshment event
     """
-    τₑ = rand(state.thin_prop)
-    τᵣ = rand(state.refresh)
-    return τᵣ < τₑ, min(τₑ, τᵣ)
+    τ = rand(state.thinning)
+    λₜ = rate(state.thinning, τ)
+    λᵣ = state.thinning.c
+    refresh = rand()*λₜ < λᵣ
+    return refresh, τ
+end
+
+function move_linear(skel::Skeleton, τ)
+    t = skel.t + τ
+    x = skel.x + τ*skel.v
+    v = skel.v
+    return t, x, v
+end
+
+function move(current::Skeleton, event_vec, Δt)
+
+    t = current.t
+    t_new = current.t + Δt
+    
+    while( t < t_new )
+        time_to_next_event = event_vec[1].skeleton.t - t
+        Δr = t_new - t
+        if(time_to_next_event < Δr)
+            current_event = popfirst!(event_vec)
+            current = current_event.skeleton
+        else
+            current = Skeleton(move_linear(current, Δr)...)
+        end
+        t = current.t
+    end
+    
+    return current
 end
 
 function bounce!(v, grad)
@@ -40,50 +64,62 @@ function bounce!(v, grad)
     v[:] = v - 2 * sum(grad .* v) * grad
 end
 
-function BPS(∇U::Function, H::Matrix, λᵣ::Float64)
-    
-    function bps_internal!(refresh, v, grad, thin, τ)
-        if(refresh)
-            randn!(v)
-            a, b = v'*H*v, v'*grad
+function bounce_kernel(rng, state::BPSstate, H, grad, refresh, τ)
+    v = copy(state.skeleton.v)
+    if(refresh)
+        randn!(rng,v)
+        a, b = v'*H*v, v'*grad
+        event = true
+    else
+        λ = v'*grad
+        λᵤ = rate(state.thinning, τ) - state.thinning.c
+        if(λᵤ < λ -1e-10)
+            println("---------------------------")
+            println("Error in thinning")
+            println(λ/λᵤ)
+            println("---------------------------")
+        end
+
+        if(rand(rng)*λᵤ <= λ)
+            bounce!(v, grad)
+            a, b = v'*H*v, -λ
             event = true
         else
-            λ = v'*grad
-            λᵤ = rate(thin, τ)
-            if(λᵤ < λ -1e-10)
-                println("---------------------------")
-                println("Error in thinning")
-                println(λ/λᵤ)
-                println("---------------------------")
-            end
-
-            if(rand()*λᵤ <= λ)
-                bounce!(v, grad)
-                a, b = v'*H*v, -λ
-                event = true
-            else
-                a, b = state.thin_prop.a, λ
-                event = false
-            end
+            a, b = state.thinning.a, λ
+            event = false
         end
-        return a, b, event
     end
+    return a, b, v, event
+end
 
-    function kernel(state::BPSstate)
-        t, x, v = state.skeleton.t, state.skeleton.x, state.skeleton.v
+function BPS(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float64)
+
+    function kernel_event(state::BPSstate)
+        rng = Random.default_rng()
 
         refresh, τ = rand(state)
-        x += τ*v
-        t += τ
-
-        a, b, event = bps_internal!(refresh, v, ∇U(x), state.thin_prop, τ)
+        t, x, v = move_linear(state.skeleton, τ)
+        a, b, v, event = bounce_kernel(rng, state, H, ∇U(x), refresh, τ)
 
         newskeleton = Skeleton(t, x, v)
-        newstate = BPSstate(newskeleton, AffinePoisson(a,b), HomogeneousPoisson(λᵣ))
+        newstate = BPSstate(newskeleton, AffinePoisson(a,b,λᵣ))
 
-        info = BPSinfo(event, refresh)
+        return newstate
+    end
 
-        return newstate, info
+    function kernel(state::BPSDiscreteState)
+        current = state.current
+        event_vec = state.event_vec
+
+        while(event_vec[end].skeleton.t < current_new.t + Δt )
+            next_event = kernel_event(next_event)
+            push!(event_vec, next_event)
+        end
+
+        new_current = move(state, Δt)
+        newstate = BPSDiscreteState(new_current, event_vec, h(new_current))
+
+        return newstate
     end
 
     function init(position::Vector)
@@ -94,8 +130,10 @@ function BPS(∇U::Function, H::Matrix, λᵣ::Float64)
         a = velocity'*H*velocity
         b = velocity'*grad
 
-        newskeleton = Skeleton(0., position, velocity)
-        return BPSstate(newskeleton, AffinePoisson(a,b), HomogeneousPoisson(λᵣ))
+        current = Skeleton(0., position, velocity)
+        nextevent = kernel_event(BPSstate(current, AffinePoisson(a,b,λᵣ)))
+        newstate = BPSDiscreteState(current, [nextevent], h(current))
+        return newstate
     end
     
     return PDMP(init, kernel)
