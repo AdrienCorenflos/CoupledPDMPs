@@ -93,14 +93,15 @@ function logpdf(d::AffinePoisson, x::Real)
 
     elseif (b < 0.0) & (a > 0.0) 
         # log Norm constant
-        lnc = log( 1.0 + 1.0 - exp(c * b / a) )  
+        lnc = log( exp(b*c/(a)) + 1.0 - exp(c * b / a) )  
 
         if x < -b / a
             # λ = c on (0,-b/a)      
             return log(c) - c * x - lnc
         else
             # λ = (at+b) + c on (-b/a, t)
-            return log(a*x+b+c)-(a * x^2 / 2 + b * x + c * x + b*c/a+ b^2/(2*a)) - lnc
+            return log(a*x+b+c)-( -b*c/a+ (b+a*x)*(b + 2*c + a*x)/(2*a) ) - lnc
+            #return log(a*x+b+c)-(a * x^2 / 2 + b * x + c * x + b*c/a+ b^2/(2*a)) - lnc
         end
 
     elseif (b > 0.0) & (a < 0.0) # Issue

@@ -21,8 +21,8 @@ using Plots
 end
 
 
-function test_one(a, b, c, res)
-    d = AffinePoisson(a, b, c)
+function test_one(a, b, c, shift, res)
+    d = AffinePoisson(a, b, c, shift)
     rand!(d,res)
     kde_max = sort(res)[length(res)-100]
     kde_res = kde(res, boundary=(0, kde_max),  npoints = 2^15) 
@@ -48,9 +48,9 @@ end
     N = 1_000_000
     res = zeros(Float64, N)
 
-    a, b, c, shift = 1., 0.5, 0.1, -1.
+    a, b, c, shift = 1., 0.5, 0.1, 0.
     test_one(a, b, c, shift, res)
-    a, b, c, shift = 1., -0.5, .1, -1.
+    a, b, c, shift = 0.1, -0.5, 1., 0.
     test_one(a, b, c, shift, res)
 
     a, b, c, shift = 3., -2., 1., 1.

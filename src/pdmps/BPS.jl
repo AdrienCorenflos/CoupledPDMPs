@@ -98,7 +98,7 @@ function BPS(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float6
         rng = Random.default_rng()
 
         refresh, τ = rand(state)
-        t, x, v = move_linear(state.skeleton, τ)
+        t, x, _ = move_linear(state.skeleton, τ)
         a, b, v, event = bounce_kernel(rng, state, H, ∇U(x), refresh, τ)
 
         newskeleton = Skeleton(t, x, v)
@@ -111,12 +111,12 @@ function BPS(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float6
         current = state.current
         event_vec = state.event_vec
 
-        while(event_vec[end].skeleton.t < current_new.t + Δt )
-            next_event = kernel_event(next_event)
-            push!(event_vec, next_event)
+        while(event_vec[end].skeleton.t < current.t + Δt )
+            next_event = kernel_event(event_vec[end])
+            event_vec = vcat(event_vec, next_event)
         end
 
-        new_current = move(state, Δt)
+        new_current = move(current, event_vec, Δt)
         newstate = BPSDiscreteState(new_current, event_vec, h(new_current))
 
         return newstate
@@ -136,6 +136,6 @@ function BPS(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float6
         return newstate
     end
     
-    return PDMP(init, kernel)
+    return DPDMP(init, kernel, kernel_event)
 end
 

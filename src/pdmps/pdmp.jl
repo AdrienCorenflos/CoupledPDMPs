@@ -18,12 +18,12 @@ struct PDMP
     onestep::Function
 end
 
-struct COUPLEDPDMP
-    """ COUPLEDPDMP 
-    More general allows for coupling.
+struct DPDMP
+    """ Discrete kernel PDMP 
+    
     """
     init::Function
     onestep::Function
-    onestep_couple::Function
+    onestep_event::Function
 end
 
