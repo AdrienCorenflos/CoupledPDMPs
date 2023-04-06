@@ -5,6 +5,16 @@ using Statistics
 using Test
 
 
+function crn(d₁, d₂)
+    function Γ(rng=Random.GLOBAL_RNG)
+        copied_rng = copy(rng)
+        x₁ = rand(rng, d₁)
+        x₂ = rand(copied_rng, d₂)
+        return x₁, x₂
+    end
+    return Γ
+end
+
 
 @testset "Check that Dang's coupling works for 1D distributions." begin
     x₁, x₂ = randn(Float64), randn(Float64)
@@ -16,7 +26,7 @@ using Test
     res₂ = zeros(Float64, N)
     coupled = zeros(Bool, N)
 
-    Γ() = rand(d₁), rand(d₂)
+    Γ = crn(d₁, d₂)
     for i = 1:N
         res₁[i], res₂[i], coupled[i] = dau_chopin(d₁, d₂, Γ)
     end
