@@ -125,8 +125,7 @@ function BPS(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float6
     end
 
 
-    function init(position::Vector)
-        velocity = randn(length(position))
+    function init(position::Vector, velocity::Vector)
         grad = ∇U(position)
 
         # Set the thinning bound

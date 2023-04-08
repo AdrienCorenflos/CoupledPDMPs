@@ -66,17 +66,21 @@ function sample_event(kernel, coupledstate, N)
     return states
 end
 
-H = diagm([1., 1., 1., 1., 1., 1.])
+d = 50
+diag_d = fill(1., d)
+H = diagm(diag_d)
 
-Random.seed!(2)
-Δt = 3.
+Random.seed!(1)
+Δt = 10.
 sampler = BPS_coupling(∇U, H, h, Δt, 1.)
 x1 = randn(dim(H)) .* 10; x2 = randn(dim(H)) .* 10
+v1 = randn(dim(H))
+v2 = copy(v1)
 coupled_state = sampler.init(x1, x2)
 
 # Run sampler discrete_kernel
 Random.seed!(1)
-samples = sample_coupledpdmp(sampler.onestep, coupled_state, Int(ceil(300/Δt)))
+samples = sample_coupledpdmp(sampler.onestep, coupled_state, Int(ceil(3000/Δt)))
 
 samples_x1 = hcat(get_x1.(samples)...)'
 samples_x2 = hcat(get_x2.(samples)...)'
@@ -89,7 +93,7 @@ scatter!(get_t2.(samples), samples_x2[:,1],  markersize=1,markerstrokewidth=0)
 K = 10
 M = 1_000
 
-Random.seed!(2)
+Random.seed!(1)
 τ, h_out, i_out = rhee_glynn(sampler.onestep, coupled_state, K, M, true)
 
 

@@ -17,6 +17,7 @@ struct BPScoupledstate <: PDMPState
     """
     state_1::BPSDiscreteState
     state_2::BPSDiscreteState
+    coupled_x::Bool
     coupled::Bool
 end
 
@@ -44,7 +45,7 @@ end
 
 function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float64)
 
-    function kernel_event(state_1::BPSstate, state_2::BPSstate)
+    function kernel_event(state_1::BPSstate, state_2::BPSstate, coupled_x::Bool, coupled::Bool)
         
         coupled_time, refresh1, refresh2, τ1, τ2 = rand(state_1, state_2)
 
@@ -54,12 +55,16 @@ function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λ�
         rng = Random.default_rng()
         current_rng = copy(rng)
 
-        coupled_v = false
         if(refresh1 & refresh2)
             τ1_next, _, coupled_time = thorisson(state_1.refresh, state_2.refresh)
-            v1, v2, coupled_x = reflection_maximal(x1, x2, τ1_next)
+            v1, v2, coupled_v = reflection_maximal(x1, x2, τ1_next)
             v1 -= x1; v2 -= x2; 
             v1 /= τ1_next; v2 /= τ1_next; 
+            if(coupled_x)
+                coupled = true
+            else
+                coupled_x = coupled_time & coupled_v
+            end
             copy!(Random.default_rng(), current_rng)
             a1 = v1'*H*v1; a2 = v2'*H*v2;
             b1 = v1'*∇U(x1); b2 = v2'*∇U(x2) 
@@ -75,12 +80,14 @@ function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λ�
         newskeleton2 = Skeleton(t2, x2, v2)
         newstate_2 = BPSstate(newskeleton2, AffinePoisson(a2,b2,0., t2+Δt-t1), HomogeneousPoisson(λᵣ, t2+Δt-t1))
 
-        return newstate_1, newstate_2
+        return newstate_1, newstate_2, coupled_x, coupled
     end
 
     function kernel(coupledstate::BPScoupledstate)
         current_1, current_2 = coupledstate.state_1.current, coupledstate.state_2.current
         event_vec_1, event_vec_2 = coupledstate.state_1.event_vec, coupledstate.state_2.event_vec
+
+        coupled_x, coupled = coupled_state.coupled_x, coupled_state.coupled
 
         update_event_1 = event_vec_1[end].skeleton.t < current_1.t + Δt 
         update_event_2 = event_vec_2[end].skeleton.t < current_2.t + Δt 
@@ -88,7 +95,7 @@ function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λ�
         # Update event list until it contains next events for both processes
         while(update_event_1 || update_event_2)
 
-            event_1, event_2 = kernel_event(event_vec_1[end], event_vec_2[end])
+            event_1, event_2, coupled_x, coupled = kernel_event(event_vec_1[end], event_vec_2[end], coupled_x, coupled)
             event_vec_1 = vcat(event_vec_1, event_1)
             event_vec_2 = vcat(event_vec_2, event_2)
 
@@ -101,13 +108,12 @@ function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λ�
 
         newstate_1 = BPSDiscreteState(new_current_1, event_vec_1, h(new_current_1))
         newstate_2 = BPSDiscreteState(new_current_2, event_vec_2, h(new_current_2))
-        coupled = (sum(abs.(new_current_1.x .- new_current_2.x)) < 1e-10) & (sum(abs.(new_current_1.v .- new_current_2.v)) < 1e-10) & (new_current_1.t - Δt - new_current_1.t  < 1e-10)
-        newstate = BPScoupledstate(newstate_1, newstate_2, coupled)
+        #coupled = (sum(abs.(new_current_1.x .- new_current_2.x)) < 1e-10) & (sum(abs.(new_current_1.v .- new_current_2.v)) < 1e-10) & (new_current_1.t - Δt - new_current_1.t  < 1e-10)
+        newstate = BPScoupledstate(newstate_1, newstate_2, coupled_x, coupled)
         return newstate
     end
 
-    function init(position::Vector)
-        velocity = randn(length(position))
+    function init(position::Vector, velocity::Vector)
         grad = ∇U(position)
 
         # Set the thinning bound
@@ -118,20 +124,20 @@ function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λ�
         return BPSstate(newskeleton, AffinePoisson(a,b), HomogeneousPoisson(λᵣ))
     end
 
-    function init_coupling(position1::Vector, position2::Vector)
-        event_1 = init(position1)
+    function init_coupling(position1::Vector, velocity1::Vector, position2::Vector, velocity2::Vector)
+        event_1 = init(position1, velocity1)
         new_current_1 = event_1.skeleton
 
         temp = BPSDiscreteState(new_current_1, [event_1], h(new_current_1))
 
-        nextstate = kernel(BPScoupledstate(temp, temp, false))
+        nextstate = kernel(BPScoupledstate(temp, temp, false, false))
         state_1 = BPSDiscreteState(nextstate.state_1.current, [nextstate.state_1.event_vec[1]], h(nextstate.state_1.current))
 
-        event_2 = init(position2)
+        event_2 = init(position2, velocity2)
         new_current_2 = event_2.skeleton
         state_2 = BPSDiscreteState(new_current_2, [event_2], h(new_current_2))
         
-        return BPScoupledstate(state_1, state_2, false)
+        return BPScoupledstate(state_1, state_2, false, false)
     end
 
     return DPDMP(init_coupling, kernel, kernel_event)
