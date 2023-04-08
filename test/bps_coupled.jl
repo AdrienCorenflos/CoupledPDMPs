@@ -76,7 +76,7 @@ sampler = BPS_coupling(∇U, H, h, Δt, 1.)
 x1 = randn(dim(H)) .* 10; x2 = randn(dim(H)) .* 10
 v1 = randn(dim(H))
 v2 = copy(v1)
-coupled_state = sampler.init(x1, x2)
+coupled_state = sampler.init(x1, v1, x2, v2)
 
 # Run sampler discrete_kernel
 Random.seed!(1)

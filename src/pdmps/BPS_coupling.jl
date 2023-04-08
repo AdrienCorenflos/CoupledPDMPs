@@ -87,7 +87,7 @@ function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λ�
         current_1, current_2 = coupledstate.state_1.current, coupledstate.state_2.current
         event_vec_1, event_vec_2 = coupledstate.state_1.event_vec, coupledstate.state_2.event_vec
 
-        coupled_x, coupled = coupled_state.coupled_x, coupled_state.coupled
+        coupled_x, coupled = coupledstate.coupled_x, coupledstate.coupled
 
         update_event_1 = event_vec_1[end].skeleton.t < current_1.t + Δt 
         update_event_2 = event_vec_2[end].skeleton.t < current_2.t + Δt 
