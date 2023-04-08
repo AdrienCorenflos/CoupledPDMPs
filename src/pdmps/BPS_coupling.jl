@@ -24,13 +24,19 @@ function rand(state_1::BPSstate, state_2::BPSstate)
     """ Make a coupled proposal
     Return next time and if refreshment event
     """
-    λᵣ = state_1.thinning.c                         # Assumes the same ref rate for both
+    # couple refreshment
+    ref1, ref2, coupled_time_ref = thorisson(state_1.refresh, state_2.refresh)
+    thin1, thin2, coupled_time_thin = thorisson(state_1.thinning, state_2.thinning)
+    
+    τ1, τ2 = min(ref1, thin1), min(ref2, thin2)
+    refresh1, refresh2 = ref1 < thin1, ref2 < thin2
+    if(refresh1)
+        coupled_time = refresh2 & coupled_time_ref
+    else
+        coupled_time = !refresh2 & coupled_time_thin
+    end
 
-    τ1, τ2, coupled_time = thorisson(state_1.thinning, state_2.thinning)
     τ2 = τ2 - state_2.thinning.shift
-    λ1, λ2 = rate(state_1.thinning, τ1), rate(state_2.thinning, τ2)
-
-    refresh1, refresh2, coupled = thorisson(Bernoulli(λᵣ/λ1), Bernoulli(λᵣ/λ2)) # Lazy coupling
 
     return coupled_time, refresh1, refresh2, τ1, τ2
 end
@@ -48,26 +54,26 @@ function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λ�
         rng = Random.default_rng()
         current_rng = copy(rng)
 
+        coupled_v = false
         if(refresh1 & refresh2)
-            if(coupled_time)
-                v1, v2, _, _, _ = coupled_next_refresh(x1, x2, λᵣ)
-                copy!(Random.default_rng(), current_rng)
-            else
-                v1, v2, _ = reflection_maximal(fill(0.,size(v1)), fill(0.,size(v1)), 1.)
-            end
+            τ1_next, _, coupled_time = thorisson(state_1.refresh, state_2.refresh)
+            v1, v2, coupled_x = reflection_maximal(x1, x2, τ1_next)
+            v1 -= x1; v2 -= x2; 
+            v1 /= τ1_next; v2 /= τ1_next; 
+            copy!(Random.default_rng(), current_rng)
             a1 = v1'*H*v1; a2 = v2'*H*v2;
             b1 = v1'*∇U(x1); b2 = v2'*∇U(x2) 
-            event1 = true; event2 = true
+
         else
             a1, b1, v1, event1 = bounce_kernel(rng, state_1, H, ∇U(x1), refresh1, τ1)
             a2, b2, v2, event2 = bounce_kernel(current_rng,state_2, H, ∇U(x2), refresh2, τ2)
         end
 
         newskeleton1 = Skeleton(t1, x1, v1)
-        newstate_1 = BPSstate(newskeleton1, AffinePoisson(a1,b1,λᵣ))
+        newstate_1 = BPSstate(newskeleton1, AffinePoisson(a1,b1), HomogeneousPoisson(λᵣ))
         
         newskeleton2 = Skeleton(t2, x2, v2)
-        newstate_2 = BPSstate(newskeleton2, AffinePoisson(a2,b2,λᵣ, t2+Δt-t1))
+        newstate_2 = BPSstate(newskeleton2, AffinePoisson(a2,b2,0., t2+Δt-t1), HomogeneousPoisson(λᵣ, t2+Δt-t1))
 
         return newstate_1, newstate_2
     end
@@ -109,7 +115,7 @@ function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λ�
         b = velocity'*grad
 
         newskeleton = Skeleton(0., position, velocity)
-        return BPSstate(newskeleton, AffinePoisson(a,b,λᵣ))
+        return BPSstate(newskeleton, AffinePoisson(a,b), HomogeneousPoisson(λᵣ))
     end
 
     function init_coupling(position1::Vector, position2::Vector)

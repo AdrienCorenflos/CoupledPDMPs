@@ -12,6 +12,7 @@ Additional information regarding the thinning procedure is stored for efficiency
 struct BPSstate
     skeleton::Skeleton
     thinning::AffinePoisson
+    refresh::HomogeneousPoisson
 end
 
 struct BPSDiscreteState
@@ -24,10 +25,11 @@ function rand(state::BPSstate)
     """ Make a proposal
     Return if refreshment event
     """
-    τ = rand(state.thinning)
-    λₜ = rate(state.thinning, τ)
-    λᵣ = state.thinning.c
-    refresh = rand()*λₜ < λᵣ
+    thin = rand(state.thinning)
+    ref = rand(state.refresh)
+    τ = min(thin, ref)
+    refresh = ref < thin
+    
     return refresh, τ
 end
 
@@ -72,7 +74,7 @@ function bounce_kernel(rng, state::BPSstate, H, grad, refresh, τ)
         event = true
     else
         λ = v'*grad
-        λᵤ = rate(state.thinning, τ) - state.thinning.c
+        λᵤ = rate(state.thinning, τ)
         if(λᵤ < λ -1e-10)
             println("---------------------------")
             println("Error in thinning")
@@ -102,7 +104,7 @@ function BPS(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float6
         a, b, v, event = bounce_kernel(rng, state, H, ∇U(x), refresh, τ)
 
         newskeleton = Skeleton(t, x, v)
-        newstate = BPSstate(newskeleton, AffinePoisson(a,b,λᵣ))
+        newstate = BPSstate(newskeleton, AffinePoisson(a,b), HomogeneousPoisson(λᵣ))
 
         return newstate
     end
@@ -122,6 +124,7 @@ function BPS(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float6
         return newstate
     end
 
+
     function init(position::Vector)
         velocity = randn(length(position))
         grad = ∇U(position)
@@ -131,7 +134,7 @@ function BPS(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float6
         b = velocity'*grad
 
         current = Skeleton(0., position, velocity)
-        nextevent = kernel_event(BPSstate(current, AffinePoisson(a,b,λᵣ)))
+        nextevent = kernel_event(BPSstate(current, AffinePoisson(a,b), HomogeneousPoisson(λᵣ)))
         newstate = BPSDiscreteState(current, [nextevent], h(current))
         return newstate
     end

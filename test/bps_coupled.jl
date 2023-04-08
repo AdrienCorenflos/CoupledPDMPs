@@ -39,8 +39,6 @@ using Test
 using Distributed
 using SharedArrays
 
-H = diagm([1.])
-
 function ∇U(x::Vector)
     x
 end
@@ -49,7 +47,7 @@ function h(pdmp_state::Skeleton)
     return pdmp_state.x[1]
 end
 
-# Run the sampler (memory inefficient version)
+# Run the sampler
 function sample_coupledpdmp(kernel, coupledstate, N)
     states = Vector{typeof(coupledstate)}(undef, N)
     states[1] = coupledstate
@@ -63,51 +61,35 @@ function sample_event(kernel, coupledstate, N)
     states = Vector{typeof(coupledstate)}(undef, N)
     states[1] = coupledstate
     for i in 1:(N-1)
-        println(i)
         states[i+1] = kernel(states[i]...)
     end
     return states
 end
 
-include("../src/pdmps/BPS_coupling.jl")
-Random.seed!(1)
-sampler = BPS_coupling(∇U, H, h, .1, 1.)
-x1 = randn(1); x2 = randn(1) .+ 10
+H = diagm([1., 1., 1., 1., 1., 1.])
+
+Random.seed!(2)
+Δt = 3.
+sampler = BPS_coupling(∇U, H, h, Δt, 1.)
+x1 = randn(dim(H)) .* 10; x2 = randn(dim(H)) .* 10
 coupled_state = sampler.init(x1, x2)
-
-
-# Run sampler event_kernel
-Random.seed!(1)
-event_state = (coupled_state.state_1.event_vec[1], coupled_state.state_2.event_vec[1])
-samples2 = sample_event(sampler.onestep_event, event_state, 100)
-
-samples_x1 = hcat(get_x1.(samples2)...)'
-samples_x2 = hcat(get_x2.(samples2)...)'
-
-plot(get_t1.(samples2), samples_x1[:,1])
-plot!(get_t2.(samples2), samples_x2[:,1])
-xlims!(0, 75)
 
 # Run sampler discrete_kernel
 Random.seed!(1)
-samples = sample_coupledpdmp(sampler.onestep, coupled_state, 75*10)
+samples = sample_coupledpdmp(sampler.onestep, coupled_state, Int(ceil(300/Δt)))
 
 samples_x1 = hcat(get_x1.(samples)...)'
 samples_x2 = hcat(get_x2.(samples)...)'
-scatter(get_t1.(samples), samples_x1[:,1],  markersize=2)
-scatter!(get_t2.(samples), samples_x2[:,1],  markersize=2)
-xlims!(0, 75)
+scatter(get_t1.(samples), samples_x1[:,1],  markersize=1,markerstrokewidth=0)
+scatter!(get_t2.(samples), samples_x2[:,1],  markersize=1,markerstrokewidth=0)
 
 
 
 ## Estimator
+K = 10
+M = 1_000
 
-
-
-K = 250
-M = 100_000
-
-Random.seed!(1)
+Random.seed!(2)
 τ, h_out, i_out = rhee_glynn(sampler.onestep, coupled_state, K, M, true)
 
 
