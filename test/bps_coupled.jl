@@ -1,5 +1,4 @@
 include("../src/coupled_estimator.jl")
-include("../src/generic_couplings/thorisson.jl")
 include("../src/pdmps/BPS_coupling.jl")
 
 function get_x1(cstate::BPScoupledstate)
@@ -40,7 +39,7 @@ using Distributed
 using SharedArrays
 
 function ∇U(x::Vector)
-    x
+    x .- 1.5
 end
 
 function h(pdmp_state::Skeleton)
@@ -66,12 +65,12 @@ function sample_event(kernel, coupledstate, N)
     return states
 end
 
-d = 50
+d = 2
 diag_d = fill(1., d)
 H = diagm(diag_d)
 
-Random.seed!(1)
-Δt = 10.
+Random.seed!(5)
+Δt = 1.
 sampler = BPS_coupling(∇U, H, h, Δt, 1.)
 x1 = randn(dim(H)) .* 10; x2 = randn(dim(H)) .* 10
 v1 = randn(dim(H))
@@ -79,19 +78,22 @@ v2 = copy(v1)
 coupled_state = sampler.init(x1, v1, x2, v2)
 
 # Run sampler discrete_kernel
-Random.seed!(1)
-samples = sample_coupledpdmp(sampler.onestep, coupled_state, Int(ceil(3000/Δt)))
+samples = sample_coupledpdmp(sampler.onestep, coupled_state, Int(ceil(8000/Δt)))
 
 samples_x1 = hcat(get_x1.(samples)...)'
 samples_x2 = hcat(get_x2.(samples)...)'
 scatter(get_t1.(samples), samples_x1[:,1],  markersize=1,markerstrokewidth=0)
 scatter!(get_t2.(samples), samples_x2[:,1],  markersize=1,markerstrokewidth=0)
 
+samples[end].coupled_x
+
+samples[end].state_1.event_vec[end]
+samples[end].state_2.event_vec[end]
 
 
 ## Estimator
-K = 10
-M = 1_000
+K = 1000
+M = 2_000
 
 Random.seed!(1)
 τ, h_out, i_out = rhee_glynn(sampler.onestep, coupled_state, K, M, true)

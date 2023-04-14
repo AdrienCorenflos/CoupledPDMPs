@@ -1,5 +1,5 @@
 include("BPS.jl")
-
+include("../generic_couplings/dau_chopin.jl")
 """
 State of the Bouncy Particle Sampler
 
@@ -21,13 +21,25 @@ struct BPScoupledstate <: PDMPState
     coupled::Bool
 end
 
+function crn(d₁, d₂)
+    function Γ(rng=Random.GLOBAL_RNG)
+        copied_rng = copy(rng)
+        x₁ = rand(rng, d₁)
+        x₂ = rand(copied_rng, d₂)
+        return x₁, x₂
+    end
+    return Γ
+end
+
 function rand(state_1::BPSstate, state_2::BPSstate)
     """ Make a coupled proposal
     Return next time and if refreshment event
     """
     # couple refreshment
-    ref1, ref2, coupled_time_ref = thorisson(state_1.refresh, state_2.refresh)
-    thin1, thin2, coupled_time_thin = thorisson(state_1.thinning, state_2.thinning)
+    Γᵣ = crn(state_1.refresh, state_2.refresh)
+    ref1, ref2, coupled_time_ref = dau_chopin(state_1.refresh, state_2.refresh, Γᵣ)
+    Γₜ = crn(state_1.thinning, state_2.thinning)
+    thin1, thin2, coupled_time_thin = dau_chopin(state_1.thinning, state_2.thinning, Γₜ)
     
     τ1, τ2 = min(ref1, thin1), min(ref2, thin2)
     refresh1, refresh2 = ref1 < thin1, ref2 < thin2
@@ -55,24 +67,33 @@ function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λ�
         rng = Random.default_rng()
         current_rng = copy(rng)
 
-        if(refresh1 & refresh2)
-            τ1_next, _, coupled_time = thorisson(state_1.refresh, state_2.refresh)
-            v1, v2, coupled_v = reflection_maximal(x1, x2, τ1_next)
-            v1 -= x1; v2 -= x2; 
-            v1 /= τ1_next; v2 /= τ1_next; 
-            if(coupled_x)
-                coupled = true
-            else
-                coupled_x = coupled_time & coupled_v
-            end
-            copy!(Random.default_rng(), current_rng)
-            a1 = v1'*H*v1; a2 = v2'*H*v2;
-            b1 = v1'*∇U(x1); b2 = v2'*∇U(x2) 
-
+        if( coupled )
+            a1, b1, v1, _ = bounce_kernel(rng, state_1, H, ∇U(x1), refresh1, τ1)
+            a2, b2, v2 = copy(a1), copy(b1), copy(v1)
         else
-            a1, b1, v1, event1 = bounce_kernel(rng, state_1, H, ∇U(x1), refresh1, τ1)
-            a2, b2, v2, event2 = bounce_kernel(current_rng,state_2, H, ∇U(x2), refresh2, τ2)
+            if(refresh1 & refresh2)
+                Γᵣ = crn(HomogeneousPoisson(λᵣ), HomogeneousPoisson(λᵣ, t2+Δt-t1))
+                τ1_next, _, coupled_time_next = dau_chopin(HomogeneousPoisson(λᵣ), HomogeneousPoisson(λᵣ, t2+Δt-t1), Γᵣ)
+                v1, v2, coupled_v = reflection_maximal(x1, x2, τ1_next)
+                v1 -= x1; v2 -= x2; 
+                v1 /= τ1_next; v2 /= τ1_next; 
+                
+                if(coupled_x)
+                    coupled = coupled_time & coupled_v
+                else
+                    coupled_x = coupled_time_next & coupled_v & coupled_time
+                end 
+                copy!(Random.default_rng(), current_rng)
+                a1 = v1'*H*v1; a2 = v2'*H*v2;
+                b1 = v1'*∇U(x1); b2 = v2'*∇U(x2) 
+
+            else
+                coupled_x = false
+                a1, b1, v1, _ = bounce_kernel(rng, state_1, H, ∇U(x1), refresh1, τ1)
+                a2, b2, v2, _ = bounce_kernel(current_rng, state_2, H, ∇U(x2), refresh2, τ2)
+            end
         end
+
 
         newskeleton1 = Skeleton(t1, x1, v1)
         newstate_1 = BPSstate(newskeleton1, AffinePoisson(a1,b1), HomogeneousPoisson(λᵣ))
