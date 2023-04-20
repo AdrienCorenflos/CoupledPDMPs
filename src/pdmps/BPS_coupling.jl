@@ -1,5 +1,6 @@
-include("BPS.jl")
-include("../generic_couplings/dau_chopin.jl")
+include("../generic_couplings/thorisson.jl")
+include("../coupled_refresh.jl")
+include("pdmp.jl")
 """
 State of the Bouncy Particle Sampler
 
@@ -10,157 +11,341 @@ Additional information regarding the thinning procedure is stored for efficiency
 - `thinning::AffinePoisson`: The proposal for thinning 
 """
 
-struct BPScoupledstate <: PDMPState
-    """ State of the BPS
-    The BPS algo takes a position and returns the next thinned event.
-    To improve computation on the bounce and thinning additional info is stored
+struct coupled_event_info 
+    """ Event information for next coupled event
+    Next event times, bounce indicators, flags for coupled time, position and bounce
     """
-    state_1::BPSDiscreteState
-    state_2::BPSDiscreteState
-    coupled_x::Bool
-    coupled::Bool
+    τ₁::Float64
+    τ₂::Float64
+    bounce₁::Bool
+    bounce₂::Bool
+    ref_coupled::Bool
+    ref_pos_coupled::Bool
+    b_coupled::Bool
 end
 
-function crn(d₁, d₂)
-    function Γ(rng=Random.GLOBAL_RNG)
-        copied_rng = copy(rng)
-        x₁ = rand(rng, d₁)
-        x₂ = rand(copied_rng, d₂)
-        return x₁, x₂
-    end
-    return Γ
-end
+function lindvall_roger(mx, my, sigmax, sigmay)
+    # Get dimension
+    d = size(mx)[1]
 
-function rand(state_1::BPSstate, state_2::BPSstate)
-    """ Make a coupled proposal
-    Return next time and if refreshment event
-    """
-    # couple refreshment
-    Γᵣ = crn(state_1.refresh, state_2.refresh)
-    ref1, ref2, coupled_time_ref = dau_chopin(state_1.refresh, state_2.refresh, Γᵣ)
-    Γₜ = crn(state_1.thinning, state_2.thinning)
-    thin1, thin2, coupled_time_thin = dau_chopin(state_1.thinning, state_2.thinning, Γₜ)
-    
-    τ1, τ2 = min(ref1, thin1), min(ref2, thin2)
-    refresh1, refresh2 = ref1 < thin1, ref2 < thin2
-    if(refresh1)
-        coupled_time = refresh2 & coupled_time_ref
-    else
-        coupled_time = !refresh2 & coupled_time_thin
-    end
-
-    τ2 = τ2 - state_2.thinning.shift
-
-    return coupled_time, refresh1, refresh2, τ1, τ2
-end
-
-
-function BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float64)
-
-    function kernel_event(state_1::BPSstate, state_2::BPSstate, coupled_x::Bool, coupled::Bool)
-        
-        coupled_time, refresh1, refresh2, τ1, τ2 = rand(state_1, state_2)
-
-        t1, x1, v1 = move_linear(state_1.skeleton, τ1)
-        t2, x2, v2 = move_linear(state_2.skeleton, τ2)
-      
-        rng = Random.default_rng()
-        current_rng = copy(rng)
-
-        if( coupled )
-            a1, b1, v1, _ = bounce_kernel(rng, state_1, H, ∇U(x1), refresh1, τ1)
-            a2, b2, v2 = copy(a1), copy(b1), copy(v1)
+    # Get scaled difference
+    z = (mx - my) ./ sigmay  # Q^{-1/2}(mx - my)
+    if(mx ≈ my)
+        e = sign.(z) 
+        norm_e = norm(e)
+        if(norm_e != 0)
+            e ./= norm_e
         else
-            if(refresh1 & refresh2)
-                Γᵣ = crn(HomogeneousPoisson(λᵣ), HomogeneousPoisson(λᵣ, t2+Δt-t1))
-                τ1_next, _, coupled_time_next = dau_chopin(HomogeneousPoisson(λᵣ), HomogeneousPoisson(λᵣ, t2+Δt-t1), Γᵣ)
-                v1, v2, coupled_v = reflection_maximal(x1, x2, τ1_next)
-                v1 -= x1; v2 -= x2; 
-                v1 /= τ1_next; v2 /= τ1_next; 
-                
-                if(coupled_x)
-                    coupled = coupled_time & coupled_v
-                else
-                    coupled_x = coupled_time_next & coupled_v & coupled_time
-                end 
-                copy!(Random.default_rng(), current_rng)
-                a1 = v1'*H*v1; a2 = v2'*H*v2;
-                b1 = v1'*∇U(x1); b2 = v2'*∇U(x2) 
+            e = 1/sqrt(d).* ones(d)
+        end
+    else
+        e = z ./ norm(z)
+    end
 
+    # Get x noise
+    eps_x = randn(d)
+
+    # Get y noise
+    eps_y = eps_x - 2 * dot(e, eps_x) * e  # eps_y = eps_x - 2<e, eps_x>e, the reflection. 
+    
+    # Sample
+    x = mx .+ sigmax .* eps_y
+    y = my .+ sigmay .* eps_x
+
+    return x, y, false
+end
+
+function dau_chopin(d₁::D, d₂::D, Γ) where {D}
+    x₁, x₂, _ = Γ()
+
+    ℓ₁, ℓ₂ = logpdf(d₁, x₁), logpdf(d₂, x₂)
+    ℓᵤ, ℓᵥ = log(rand()), log(rand())
+
+    ℓ¹ᵤ = ℓᵤ + ℓ₁
+    ℓ²ᵤ = ℓᵤ + ℓ₂
+
+    y = rand(d₁)
+
+    success = 0
+
+    if ℓᵥ < logpdf(d₂, y) - logpdf(d₁, y)
+        if ℓ¹ᵤ < logpdf(d₂, x₁)
+            success += 1
+            x₁ = y
+        end
+        if ℓ²ᵤ < logpdf(d₁, x₂)
+            success += 1
+            x₂ = y
+        end
+    end
+    return x₁, x₂, success > 1
+end
+
+function modified_lindvall_roger(mx, my, sigmax, sigmay)
+    function Γ()
+        return lindvall_roger(mx, my, sigmax, sigmay)
+    end
+    d₁, d₂ = MvNormal(mx, sigmax.*I(size(mx)[1])), MvNormal(my, sigmay.*I(size(my)[1]))
+    return dau_chopin(d₁, d₂, Γ)
+end
+
+function coupling_refresh(rate, shift, mode="independent")
+    # We want to couple t_1 = t_2 + shift, where both t_1 and t_2 are 
+    # exponentially distributed with the same rate.
+    # We assume the shift is positive
+    # If not flip the sign of shift and couple t_2 = t_1 + shift (will swap order)
+    swap = false
+    if(shift < 0. )
+        shift = -shift
+        swap = true
+    end
+
+    # Because the shift is positive and the rate is the same, we know that (in terms of densities)
+    # p(t_2 + shift = t) = 0 if t <= shift, 
+    # and p(t_1 = t) < p(t_2 + shift = t) = p(t_2 = t - shift) for t > shift.
+    # As a consequence, we know what min(p(t_1 = t), p(t_2 + shift = t)) is everywhere and we can integrate it.
+
+    # With probability mixture_weight, the two are coupled.
+    mixture_weight = exp(-rate * shift)
+    u = rand()
+
+    coupled = u < mixture_weight
+    if u < mixture_weight
+        log_v = log(rand())
+        t_1 = shift - log_v / rate
+        t_2 = t_1
+    else
+        if mode == "independent"
+            v = rand()
+            w = rand()
+        elseif mode == "crn"
+            v = rand()
+            w = 0. + v  # to avoid reference and force copy
+        elseif mode == "antithetic"
+            v = rand()
+            w = 1. - v
+        else
+            throw(DomainError())
+        end
+
+        v *= (1 - mixture_weight)
+        v = 1 - v
+
+        # This should perhaps be done in logspace
+        w *= 1 - mixture_weight
+        w /= (exp(rate * shift) - 1)
+        w = exp(-rate * shift) - w
+
+        log_v = log(v)
+        log_w = log(w)
+        t_1 = -log_v / rate
+        t_2 = -log_w / rate
+    end
+
+    if(swap)
+        return t_2 - shift, t_1, coupled
+    else
+        return t_1, t_2 - shift, coupled
+    end
+end
+
+
+function coupling_bounce(thin_1::AffinePoisson, thin_2::AffinePoisson)
+    τb₁, τb₂, coupled = thorisson(thin_1, thin_2)
+    return τb₁, τb₂ - thin_2.shift, coupled
+end
+
+
+function bounce!(v, grad)
+    nrm = norm(grad, 2)
+    grad = grad / nrm
+    v[:] = v - 2 * sum(grad .* v) * grad
+end
+
+function get_thin(v::Vector, grad::Vector, H::Matrix, shift::Float64)
+        
+    # Set the thinning bound
+    a = v'*H*v
+    b = v'*grad
+
+    return AffinePoisson(a, b, 0.0, shift)
+end
+
+"""
+    BPS_coupling(∇U::Function, H::Matrix, h::Function, Δt::Float64, λᵣ::Float64)
+
+TBW
+"""
+function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64)
+
+    function init_coupling(x₁::Vector, x₂::Vector)
+
+        t₁ = 0.0; t₂ = 0.0
+        
+        τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
+        v₁, v₂, ref_pos_coupled = modified_lindvall_roger(x₁, x₂, τr₁, τr₂) # Try and couple velocities
+        v₁ = (v₁- x₁) ./ τr₁; v₂ = (v₂ - x₂) ./ τr₂; 
+
+        thin_1 = get_thin(v₁, ∇U(x₁), H,  0.0)
+        thin_2 = get_thin(v₂, ∇U(x₂), H, Δt + t₂ - t₁)
+
+        # Compute next times
+        τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
+        
+        τ₁ = min(τr₁, τb₁)
+        τ₂ = min(τr₂, τb₂)
+
+        is_bounce₁ = τb₁ < τr₁
+        is_bounce₂ = τb₂ < τr₂
+
+        next_event_info = coupled_event_info(τ₁, τ₂, is_bounce₁, is_bounce₂, ref_coupled, ref_pos_coupled, b_coupled)
+
+        state_1 = (t₁, x₁, v₁)
+        state_2 = (t₂, x₂, v₂)
+        
+        return state_1, state_2, next_event_info, false, false
+    end
+
+    function kernel_event(state_1, state_2, next_event_info::coupled_event_info, coupled_next, coupled)
+        t₁, x₁, v₁ = state_1
+        t₂, x₂, v₂ = state_2
+
+        if(next_event_info.bounce₁ & next_event_info.bounce₂)
+            #println("1")
+            coupled_t = next_event_info.b_coupled
+            coupled_x = false; coupled_v = false
+            ref_pos_coupled = false
+
+            t₁ += next_event_info.τ₁
+            t₂ += next_event_info.τ₂
+
+            x₁ += next_event_info.τ₁*v₁
+            x₂ += next_event_info.τ₂*v₂
+
+            grad_1, grad_2 = ∇U(x₁), ∇U(x₂)
+            bounce!(v₁, grad_1)
+            bounce!(v₂, grad_2)
+            
+            # Compute next event times. We can do this after the event given they are only bounces
+            thin_1 = get_thin(v₁, grad_1, H,  0.0)
+            thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
+            
+            τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
+            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
+
+            is_bounce₁ = τb₁ < τr₁
+            is_bounce₂ = τb₂ < τr₂
+
+        elseif(next_event_info.bounce₁)
+            #println("2")
+            coupled_t = false; coupled_x = false; coupled_v = false
+            ref_pos_coupled = false
+
+            t₁ += next_event_info.τ₁
+            t₂ += next_event_info.τ₂
+
+            x₁ += next_event_info.τ₁*v₁
+            x₂ += next_event_info.τ₂*v₂
+
+            grad_1, grad_2 = ∇U(x₁), ∇U(x₂) ## Can improve efficiency
+            bounce!(v₁, grad_1)
+            randn!(v₂)
+
+            # Compute next event times. We can do this after the event given they are only bounces
+            thin_1 = get_thin(v₁, grad_1, H,  0.0)
+            thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
+            
+            τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
+            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
+
+            is_bounce₁ = τb₁ < τr₁
+            is_bounce₂ = τb₂ < τr₂
+
+        elseif(next_event_info.bounce₂)
+            #println("3")
+            coupled_t = false; coupled_x = false; coupled_v = false
+            ref_pos_coupled = false
+
+            t₁ += next_event_info.τ₁
+            t₂ += next_event_info.τ₂
+
+            x₁ += next_event_info.τ₁*v₁
+            x₂ += next_event_info.τ₂*v₂
+
+            grad_1, grad_2 = ∇U(x₁), ∇U(x₂) ## Can improve efficiency
+            bounce!(v₂, grad_2)
+            randn!(v₁)
+
+            # Compute next event times. We can do this after the event given they are only bounces
+            thin_1 = get_thin(v₁, grad_1, H,  0.0)
+            thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
+            
+            τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
+            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
+            
+
+            is_bounce₁ = τb₁ < τr₁
+            is_bounce₂ = τb₂ < τr₂
+
+        else
+            #println("4")
+            coupled_t = next_event_info.ref_coupled 
+            coupled_x = next_event_info.ref_pos_coupled
+
+            t₁ += next_event_info.τ₁
+            t₂ += next_event_info.τ₂
+
+            x₁ += next_event_info.τ₁*v₁
+            x₂ += next_event_info.τ₂*v₂
+
+            # Update the refreshment PRIOR to the velocity!
+            #println(Δt + t₂ - t₁)
+            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
+            println("T:", Δt + t₂ - t₁, "r1",τr₁,"r2", τr₂)
+
+            if( !(coupled_t & ref_coupled) )
+                # Check if linval or modified for eff
+                #v₁, v₂, ref_pos_coupled = lindvall_roger(x₁, x₂, τr₁, τr₂) 
+                v₁, v₂, ref_pos_coupled = modified_lindvall_roger(x₁, x₂, τr₁, τr₂) # Try and couple velocities
             else
-                coupled_x = false
-                a1, b1, v1, _ = bounce_kernel(rng, state_1, H, ∇U(x1), refresh1, τ1)
-                a2, b2, v2, _ = bounce_kernel(current_rng, state_2, H, ∇U(x2), refresh2, τ2)
+                # τr₁ = τr₂
+                v₁, v₂, ref_pos_coupled = reflection_maximal(x₁, x₂, τr₁) 
+            end
+            v₁ = (v₁- x₁) ./ τr₁; v₂ = (v₂ - x₂) ./ τr₂; 
+
+            grad_1, grad_2 = ∇U(x₁), ∇U(x₂) 
+            println("x: ",x₁, "x2:", x₂, "r1",τr₁,"r2", τr₂)
+            println("v: ",v₁)
+            thin_1 = get_thin(v₁, grad_1, H,  0.0)
+            thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
+            
+            τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
+
+            is_bounce₁ = τb₁ < τr₁
+            is_bounce₂ = τb₂ < τr₂
+
+            if(!(is_bounce₁ & is_bounce₂))
+                coupled_v = coupled_x & ref_pos_coupled
+            else
+                coupled_v = false
             end
         end
 
+        #println("ref ",τr₁, τr₂, " bnc ",τb₁, τb₂)
+        τ₁ = min(τr₁, τb₁)
+        τ₂ = min(τr₂, τb₂)
 
-        newskeleton1 = Skeleton(t1, x1, v1)
-        newstate_1 = BPSstate(newskeleton1, AffinePoisson(a1,b1), HomogeneousPoisson(λᵣ))
-        
-        newskeleton2 = Skeleton(t2, x2, v2)
-        newstate_2 = BPSstate(newskeleton2, AffinePoisson(a2,b2,0., t2+Δt-t1), HomogeneousPoisson(λᵣ, t2+Δt-t1))
+        next_event_info = coupled_event_info(τ₁, τ₂, is_bounce₁, is_bounce₂, ref_coupled, ref_pos_coupled, b_coupled)
 
-        return newstate_1, newstate_2, coupled_x, coupled
+        state_1 = (t₁, x₁, v₁)
+        state_2 = (t₂, x₂, v₂)
+
+        coupled = coupled_next
+        coupled_next = coupled_t & coupled_x & coupled_v
+
+        return state_1, state_2, next_event_info, coupled_next, coupled
     end
 
-    function kernel(coupledstate::BPScoupledstate)
-        current_1, current_2 = coupledstate.state_1.current, coupledstate.state_2.current
-        event_vec_1, event_vec_2 = coupledstate.state_1.event_vec, coupledstate.state_2.event_vec
-
-        coupled_x, coupled = coupledstate.coupled_x, coupledstate.coupled
-
-        update_event_1 = event_vec_1[end].skeleton.t < current_1.t + Δt 
-        update_event_2 = event_vec_2[end].skeleton.t < current_2.t + Δt 
-        
-        # Update event list until it contains next events for both processes
-        while(update_event_1 || update_event_2)
-
-            event_1, event_2, coupled_x, coupled = kernel_event(event_vec_1[end], event_vec_2[end], coupled_x, coupled)
-            event_vec_1 = vcat(event_vec_1, event_1)
-            event_vec_2 = vcat(event_vec_2, event_2)
-
-            update_event_1 = event_1.skeleton.t < current_1.t + Δt 
-            update_event_2 = event_2.skeleton.t < current_2.t + Δt 
-        end
-
-        new_current_1 = move(current_1, event_vec_1, Δt)
-        new_current_2 = move(current_2, event_vec_2, Δt)
-
-        newstate_1 = BPSDiscreteState(new_current_1, event_vec_1, h(new_current_1))
-        newstate_2 = BPSDiscreteState(new_current_2, event_vec_2, h(new_current_2))
-        #coupled = (sum(abs.(new_current_1.x .- new_current_2.x)) < 1e-10) & (sum(abs.(new_current_1.v .- new_current_2.v)) < 1e-10) & (new_current_1.t - Δt - new_current_1.t  < 1e-10)
-        newstate = BPScoupledstate(newstate_1, newstate_2, coupled_x, coupled)
-        return newstate
-    end
-
-    function init(position::Vector, velocity::Vector)
-        grad = ∇U(position)
-
-        # Set the thinning bound
-        a = velocity'*H*velocity
-        b = velocity'*grad
-
-        newskeleton = Skeleton(0., position, velocity)
-        return BPSstate(newskeleton, AffinePoisson(a,b), HomogeneousPoisson(λᵣ))
-    end
-
-    function init_coupling(position1::Vector, velocity1::Vector, position2::Vector, velocity2::Vector)
-        event_1 = init(position1, velocity1)
-        new_current_1 = event_1.skeleton
-
-        temp = BPSDiscreteState(new_current_1, [event_1], h(new_current_1))
-
-        nextstate = kernel(BPScoupledstate(temp, temp, false, false))
-        state_1 = BPSDiscreteState(nextstate.state_1.current, [nextstate.state_1.event_vec[1]], h(nextstate.state_1.current))
-
-        event_2 = init(position2, velocity2)
-        new_current_2 = event_2.skeleton
-        state_2 = BPSDiscreteState(new_current_2, [event_2], h(new_current_2))
-        
-        return BPScoupledstate(state_1, state_2, false, false)
-    end
-
-    return DPDMP(init_coupling, kernel, kernel_event)
+    return PDMP(init_coupling, kernel_event)
 end
 
