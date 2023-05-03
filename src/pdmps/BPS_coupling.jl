@@ -1,4 +1,5 @@
 include("../generic_couplings/thorisson.jl")
+include("../generic_couplings/exponentials.jl")
 include("../coupled_refresh.jl")
 include("pdmp.jl")
 """
@@ -30,10 +31,10 @@ function lindvall_roger(mx, my, sigmax, sigmay)
 
     # Get scaled difference
     z = (mx - my) ./ sigmay  # Q^{-1/2}(mx - my)
-    if(mx ≈ my)
+    if mx ≈ my
         e = sign.(z) 
         norm_e = norm(e)
-        if(norm_e != 0)
+        if norm_e != 0 
             e ./= norm_e
         else
             e = 1/sqrt(d).* ones(d)
@@ -85,72 +86,26 @@ function modified_lindvall_roger(mx, my, sigmax, sigmay)
     function Γ()
         return lindvall_roger(mx, my, sigmax, sigmay)
     end
-    d₁, d₂ = MvNormal(mx, sigmax.*I(size(mx)[1])), MvNormal(my, sigmay.*I(size(my)[1]))
+    d₁, d₂ = MvNormal(mx, sigmax), MvNormal(my, sigmay)
     return dau_chopin(d₁, d₂, Γ)
 end
 
 function coupling_refresh(rate, shift, mode="independent")
     # We want to couple t_1 = t_2 + shift, where both t_1 and t_2 are 
     # exponentially distributed with the same rate.
-    # We assume the shift is positive
-    # If not flip the sign of shift and couple t_2 = t_1 + shift (will swap order)
-    swap = false
-    if(shift < 0. )
-        shift = -shift
-        swap = true
-    end
-
-    # Because the shift is positive and the rate is the same, we know that (in terms of densities)
-    # p(t_2 + shift = t) = 0 if t <= shift, 
-    # and p(t_1 = t) < p(t_2 + shift = t) = p(t_2 = t - shift) for t > shift.
-    # As a consequence, we know what min(p(t_1 = t), p(t_2 + shift = t)) is everywhere and we can integrate it.
-
-    # With probability mixture_weight, the two are coupled.
-    mixture_weight = exp(-rate * shift)
-    u = rand()
-
-    coupled = u < mixture_weight
-    if u < mixture_weight
-        log_v = log(rand())
-        t_1 = shift - log_v / rate
-        t_2 = t_1
+    # Swap t_1 and t_2 if shift negative
+    if shift < 0. 
+        t_2, t_1, coupled = coupling(rate, -shift, mode)
     else
-        if mode == "independent"
-            v = rand()
-            w = rand()
-        elseif mode == "crn"
-            v = rand()
-            w = 0. + v  # to avoid reference and force copy
-        elseif mode == "antithetic"
-            v = rand()
-            w = 1. - v
-        else
-            throw(DomainError())
-        end
-
-        v *= (1 - mixture_weight)
-        v = 1 - v
-
-        # This should perhaps be done in logspace
-        w *= 1 - mixture_weight
-        w /= (exp(rate * shift) - 1)
-        w = exp(-rate * shift) - w
-
-        log_v = log(v)
-        log_w = log(w)
-        t_1 = -log_v / rate
-        t_2 = -log_w / rate
+        t_1, t_2, coupled = coupling(rate, shift, mode)
     end
-
-    if(swap)
-        return t_2 - shift, t_1, coupled
-    else
-        return t_1, t_2 - shift, coupled
-    end
+    return t_1, t_2, coupled
 end
 
 
 function coupling_bounce(thin_1::AffinePoisson, thin_2::AffinePoisson)
+    #println("Thin1: ",thin_1," thin2: ", thin_2)
+    #return rand(thin_1), rand(thin_2) - thin_2.shift, false
     τb₁, τb₂, coupled = thorisson(thin_1, thin_2)
     return τb₁, τb₂ - thin_2.shift, coupled
 end
@@ -176,15 +131,72 @@ end
 
 TBW
 """
-function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64)
+function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, couple_mode::AbstractString = "independent")
 
-    function init_coupling(x₁::Vector, x₂::Vector)
+    function init(x₁::Vector, x₂::Vector)
 
         t₁ = 0.0; t₂ = 0.0
         
-        τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
-        v₁, v₂, ref_pos_coupled = modified_lindvall_roger(x₁, x₂, τr₁, τr₂) # Try and couple velocities
+        τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁, couple_mode)
+        v₁, v₂, ref_pos_coupled = lindvall_roger(x₁, x₂, τr₁, τr₂) # Try and couple velocities
         v₁ = (v₁- x₁) ./ τr₁; v₂ = (v₂ - x₂) ./ τr₂; 
+
+        thin_1 = get_thin(v₁, ∇U(x₁), H,  0.0)
+        thin_2 = get_thin(v₂, ∇U(x₂), H, Δt + t₂ - t₁)
+
+        # Compute next times
+        τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
+        
+        τ₁ = min(τr₁, τb₁)
+        τ₂ = min(τr₂, τb₂)
+
+        is_bounce₁ = τb₁ < τr₁
+        is_bounce₂ = τb₂ < τr₂
+
+        next_event_info = coupled_event_info(τ₁, τ₂, is_bounce₁, is_bounce₂, ref_coupled, ref_pos_coupled, b_coupled)
+
+        state_1 = (t₁, x₁, v₁)
+        state_2 = (t₂, x₂, v₂)
+        
+        return state_1, state_2, next_event_info, false, false
+    end
+
+    function init_Δt(x₁::Vector, x₂::Vector)
+
+        # Run process 1 Delta_t units of time:
+        t₁ = 0.0
+        v₁ = randn(length(x₁))
+        t_next = 0.0
+        τr₁, τb₁ = -log(rand()) / λᵣ, rand(get_thin(v₁, ∇U(x₁), H, 0.0))
+        is_bounce₁ = τb₁ < τr₁
+        τ₁ = min(τr₁, τb₁)
+        t_next = t₁ + τ₁
+
+        while(t_next < Δt)
+            x₁ += v₁*(t_next - t₁)
+            t₁ = t_next
+            if(is_bounce₁)
+                grad = ∇U(x₁)
+                bounce!(v₁, grad)
+            else
+                grad = ∇U(x₁)
+                randn!(v₁)
+            end
+
+            τr₁, τb₁ = -log(rand()) / λᵣ, rand(get_thin(v₁, grad, H, 0.0))
+            is_bounce₁ = τb₁ < τr₁
+            τ₁ = min(τr₁, τb₁)
+            t_next = t₁ + τ₁
+        end
+        
+        # Move process so coupled in time
+        x₁ += v₁*(Δt - t₁)
+        t₁ = Δt
+        t₂ = 0.0
+        
+        τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁, couple_mode)
+        v₂ = randn(length(x₁))
+        ref_pos_coupled = false
 
         thin_1 = get_thin(v₁, ∇U(x₁), H,  0.0)
         thin_2 = get_thin(v₂, ∇U(x₂), H, Δt + t₂ - t₁)
@@ -231,7 +243,7 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64)
             thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
             
             τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
-            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
+            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁, couple_mode)
 
             is_bounce₁ = τb₁ < τr₁
             is_bounce₂ = τb₂ < τr₂
@@ -256,7 +268,7 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64)
             thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
             
             τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
-            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
+            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁, couple_mode)
 
             is_bounce₁ = τb₁ < τr₁
             is_bounce₂ = τb₂ < τr₂
@@ -281,7 +293,7 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64)
             thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
             
             τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
-            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
+            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁, couple_mode)
             
 
             is_bounce₁ = τb₁ < τr₁
@@ -300,13 +312,13 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64)
 
             # Update the refreshment PRIOR to the velocity!
             #println(Δt + t₂ - t₁)
-            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁)
-            println("T:", Δt + t₂ - t₁, "r1",τr₁,"r2", τr₂)
+            τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁, couple_mode)
+            #println("T:", Δt + t₂ - t₁, "r1",τr₁,"r2", τr₂)
 
             if( !(coupled_t & ref_coupled) )
                 # Check if linval or modified for eff
-                #v₁, v₂, ref_pos_coupled = lindvall_roger(x₁, x₂, τr₁, τr₂) 
-                v₁, v₂, ref_pos_coupled = modified_lindvall_roger(x₁, x₂, τr₁, τr₂) # Try and couple velocities
+                v₁, v₂, ref_pos_coupled = lindvall_roger(x₁, x₂, τr₁, τr₂) 
+                #v₁, v₂, ref_pos_coupled = modified_lindvall_roger(x₁, x₂, τr₁, τr₂) # Try and couple velocities
             else
                 # τr₁ = τr₂
                 v₁, v₂, ref_pos_coupled = reflection_maximal(x₁, x₂, τr₁) 
@@ -314,8 +326,8 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64)
             v₁ = (v₁- x₁) ./ τr₁; v₂ = (v₂ - x₂) ./ τr₂; 
 
             grad_1, grad_2 = ∇U(x₁), ∇U(x₂) 
-            println("x: ",x₁, "x2:", x₂, "r1",τr₁,"r2", τr₂)
-            println("v: ",v₁)
+            #println("x: ",x₁, "x2:", x₂, "r1",τr₁,"r2", τr₂)
+            #println("v1: ",v₁, "v2: ",v₂)
             thin_1 = get_thin(v₁, grad_1, H,  0.0)
             thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
             
@@ -346,6 +358,6 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64)
         return state_1, state_2, next_event_info, coupled_next, coupled
     end
 
-    return PDMP(init_coupling, kernel_event)
+    return PDMP(init_Δt, kernel_event)
 end
 
