@@ -155,72 +155,15 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
 
         next_event_info = coupled_event_info(τ₁, τ₂, is_bounce₁, is_bounce₂, ref_coupled, ref_pos_coupled, b_coupled)
 
-        state_1 = (t₁, x₁, v₁)
-        state_2 = (t₂, x₂, v₂)
-        
-        return state_1, state_2, next_event_info, false, false
-    end
-
-    function init_Δt(x₁::Vector, x₂::Vector)
-
-        # Run process 1 Delta_t units of time:
-        t₁ = 0.0
-        v₁ = randn(length(x₁))
-        t_next = 0.0
-        τr₁, τb₁ = -log(rand()) / λᵣ, rand(get_thin(v₁, ∇U(x₁), H, 0.0))
-        is_bounce₁ = τb₁ < τr₁
-        τ₁ = min(τr₁, τb₁)
-        t_next = t₁ + τ₁
-
-        while(t_next < Δt)
-            x₁ += v₁*(t_next - t₁)
-            t₁ = t_next
-            if(is_bounce₁)
-                grad = ∇U(x₁)
-                bounce!(v₁, grad)
-            else
-                grad = ∇U(x₁)
-                randn!(v₁)
-            end
-
-            τr₁, τb₁ = -log(rand()) / λᵣ, rand(get_thin(v₁, grad, H, 0.0))
-            is_bounce₁ = τb₁ < τr₁
-            τ₁ = min(τr₁, τb₁)
-            t_next = t₁ + τ₁
-        end
-        
-        # Move process so coupled in time
-        x₁ += v₁*(Δt - t₁)
-        t₁ = Δt
-        t₂ = 0.0
-        
-        τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁, couple_mode)
-        v₂ = randn(length(x₁))
-        ref_pos_coupled = false
-
-        thin_1 = get_thin(v₁, ∇U(x₁), H,  0.0)
-        thin_2 = get_thin(v₂, ∇U(x₂), H, Δt + t₂ - t₁)
-
-        # Compute next times
-        τb₁, τb₂, b_coupled = coupling_bounce(thin_1, thin_2)
-        
-        τ₁ = min(τr₁, τb₁)
-        τ₂ = min(τr₂, τb₂)
-
-        is_bounce₁ = τb₁ < τr₁
-        is_bounce₂ = τb₂ < τr₂
-
-        next_event_info = coupled_event_info(τ₁, τ₂, is_bounce₁, is_bounce₂, ref_coupled, ref_pos_coupled, b_coupled)
-
-        state_1 = (t₁, x₁, v₁)
-        state_2 = (t₂, x₂, v₂)
+        state_1 = (t₁, x₁, v₁, thin_1)
+        state_2 = (t₂, x₂, v₂, thin_2)
         
         return state_1, state_2, next_event_info, false, false
     end
 
     function kernel_event(state_1, state_2, next_event_info::coupled_event_info, coupled_next, coupled)
-        t₁, x₁, v₁ = state_1
-        t₂, x₂, v₂ = state_2
+        t₁, x₁, v₁, thin_1 = state_1
+        t₂, x₂, v₂, thin_2 = state_2
 
         if(next_event_info.bounce₁ & next_event_info.bounce₂)
             #println("1")
@@ -311,8 +254,8 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
             x₂ += next_event_info.τ₂*v₂
 
             # Update the refreshment PRIOR to the velocity!
-            #println(Δt + t₂ - t₁)
             τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁, couple_mode)
+            #println(Δt + t₂ - t₁, ref_coupled)
             #println("T:", Δt + t₂ - t₁, "r1",τr₁,"r2", τr₂)
 
             if( !(coupled_t & ref_coupled) )
@@ -349,15 +292,17 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
 
         next_event_info = coupled_event_info(τ₁, τ₂, is_bounce₁, is_bounce₂, ref_coupled, ref_pos_coupled, b_coupled)
 
-        state_1 = (t₁, x₁, v₁)
-        state_2 = (t₂, x₂, v₂)
-
-        coupled = coupled_next
-        coupled_next = coupled_t & coupled_x & coupled_v
+        state_1 = (t₁, x₁, v₁, thin_1)
+        state_2 = (t₂, x₂, v₂, thin_2)
+        
+        if(!coupled)
+            coupled = coupled_next
+            coupled_next = coupled_t & coupled_x & coupled_v
+        end
 
         return state_1, state_2, next_event_info, coupled_next, coupled
     end
 
-    return PDMP(init_Δt, kernel_event)
+    return PDMP(init, kernel_event)
 end
 
