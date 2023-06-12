@@ -51,7 +51,8 @@ function DiscretePDMPCoupling(sampler::coupled_pdmp, h::Function)
             end
             if h_val == undef
                 x_t, v_t = dynamics(x, v, seq[ind] - t)
-                h_val = map((u,v) -> (u + v / M), 0., h(x_t))
+                h_t = h(x_t)
+                h_val = map((u,v) -> (u + v / M), zeros(length(h_t)), h_t)
             else
                 x_t, v_t = dynamics(x, v, seq[ind] - t)
                 h_val = map((u,v) -> (u + v / M), h_val, h(x_t)) #accumulate h

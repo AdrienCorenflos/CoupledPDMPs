@@ -20,14 +20,14 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
     end
 
     ## Update v based on thinning
-    function thinning_update_v(v, grad, thin, τ)
+    function thinning_update_v(v, grad, thin, τ, rand_unif = rand())
         switch_rate = v'*grad
         upper_bound = rate(thin, τ)
         if upper_bound  < switch_rate - 1e-8
             println("upper bound", upper_bound)
             println("actual rate", switch_rate)
         end
-        if rand() * upper_bound <= switch_rate
+        if rand_unif * upper_bound <= switch_rate
             return bounce(v, grad)
         else 
             return v
@@ -67,7 +67,8 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
             end
             # Progress event to next eval time and accumulate h
             if h_val == undef
-                h_val = map((u,v) -> (u + v / M), 0., h(x + v*(T_seq[i] - t)))#h(x + v*(T_seq[i] - t))/M
+                h_t = h(x + v*(T_seq[i] - t))
+                h_val = map((u,v) -> (u + v / M), zeros(length(h_t)), h_t) #h(x + v*(T_seq[i] - t))/M
             else
                 h_val = map((u,v) -> (u + v / M), h_val, h(x + v*(T_seq[i] - t))) #accumulate h
             end
@@ -127,8 +128,15 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
             x₂, v₂ = dynamics(x₂, v₂, τ₂)
 
             grad_1, grad_2 = ∇U(x₁), ∇U(x₂)
-            v₁ = thinning_update_v(v₁, grad_1, thin_1, τ₁)
-            v₂ = thinning_update_v(v₂, grad_2, thin_2, τ₂)
+            common_u = rand()
+            # if(coupled)
+            #     println("t₁:", t₁," o v₁", v₁, " v₂ ", v₂, " ", v₁ == v₂)
+            # end
+            v₁ = thinning_update_v(v₁, grad_1, thin_1, τ₁, common_u)
+            v₂ = thinning_update_v(v₂, grad_2, thin_2, τ₂, common_u)
+            # if(coupled)
+            #     println("n v₁", v₁, " v₂ ", v₂, " ", v₁ == v₂)
+            # end
             
             # Compute next event times. We can do this after the event given they are only bounces
             thin_1 = get_thin(v₁, grad_1, H,  0.0)

@@ -30,20 +30,22 @@ function BOOM_coupling(∇U::Function, H::Matrix, Σ::Matrix, xstar::Vector, Δt
         return x_new, v_new
     end
 
-    ## Boom kernel update
-    function update_v(v, grad, upper_bound)
+    ## Update v based on thinning
+    function thinning_update_v(v, grad, thin, τ, rand_unif = rand())
         switch_rate = v'*grad
-        if upper_bound < switch_rate
+        upper_bound = rate(thin, τ)
+        if upper_bound  < switch_rate - 1e-8
             println("upper bound", upper_bound)
             println("actual rate", switch_rate)
         end
-        if rand() * upper_bound <= switch_rate
-                sk_grad = Σ_sqrt'*grad
+        if rand_unif * upper_bound <= switch_rate
+            sk_grad = Σ_sqrt'*grad
             return v - 2 * switch_rate / dot(sk_grad,sk_grad) * Σ_sqrt * sk_grad
         else 
             return v
         end
     end
+
 
     # BPS kernel Moves the state until stochastic time Tmax
     function kernel(state, T_seq, M, h_val, h = (x) -> 0.)
@@ -136,8 +138,9 @@ function BOOM_coupling(∇U::Function, H::Matrix, Σ::Matrix, xstar::Vector, Δt
             x₂, v₂ = dynamics(x₂, v₂, next_event_info.τ₂)
 
             grad_1, grad_2 = ∇U(x₁) - Σ_inv * (x₁ - xstar), ∇U(x₂) - Σ_inv * (x₂ - xstar)
-            v₁ = update_v(v₁, grad_1, rate(thin_1, next_event_info.τ₁))
-            v₂ = update_v(v₂, grad_2, rate(thin_2, next_event_info.τ₂))
+            common_u = rand()
+            v₁ = thinning_update_v(v₁, grad_1, thin_1, τ₁, common_u)
+            v₂ = thinning_update_v(v₂, grad_2, thin_2, τ₂, common_u)
             
             # Compute next event times. We can do this after the event given they are only bounces
             thin_1 = get_thin(x₁, v₁, grad_1, 0.0)
