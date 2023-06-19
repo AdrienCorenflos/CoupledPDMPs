@@ -37,7 +37,7 @@ function coupling(rate::U, shift::U, mode::T = "independent")::Tuple{U, U, Bool}
     u = rand()
 
     coupled = u < mixture_weight
-    if u < mixture_weight
+    if coupled
         log_v = log(rand())
         t_1 = shift - log_v / rate
         t_2 = t_1
