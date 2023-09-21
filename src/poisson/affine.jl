@@ -85,7 +85,14 @@ function logpdf(d::AffinePoisson, x::Real)
     a, b, c, shift = d.a, d.b, d.c, d.shift
     x = x - shift
 
-    if x < 0.0
+    if isinf(x)
+        if (a <= 0.0) & (b <= 0.0) & (c <= 0.0)
+            return 0.0
+        else
+            throw(ArgumentError("AffinePoisson: x must be positive if one of a, b or c are positive"))
+        end
+    
+    elseif x < 0.0
         return -Inf
     elseif isapprox(a, 0.0, atol = 1e-18)
         # λ = (b)₊ + c 

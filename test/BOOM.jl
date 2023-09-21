@@ -1,0 +1,211 @@
+include("../src/pdmps/PDMP_discrete.jl")
+include("../src/coupled_estimator.jl")
+using Test
+using Plots
+using Random
+using StatsPlots
+
+
+@testset "Test if BOOM kernel samples Gaussian correctly." begin
+    Random.seed!(1234)
+    # Gaussian Example
+    function ∇U(x::Vector)
+        x
+    end
+    d = 2
+    μ = zeros(d)
+    Σ = diagm(fill(1., d))
+    Σ_boom = diagm(fill(1., d))
+    λᵣ = 1.;    Δt = 0.5;    ΔM = 1
+
+    sampler = BOOM_coupling(∇U, Σ -Σ_boom, Σ_boom, μ, Δt, ΔM, λᵣ)
+    state, _, _, _, _ = sampler.init(randn(d), randn(d))
+    
+    N = 100_000
+    states = Matrix{Float64}(undef, N, 2)
+    for i in 1:N
+        T_seq = (state[1] + Δt):Δt:(state[1] + Δt)
+        state, _, _ = sampler.kernel(state, T_seq, 0.0) 
+        states[i,:] = state[2]
+    end
+    #marginalkde(states[:,1], states[:,2])
+
+    @test mean(states[:,1]) ≈ 0. atol = 1e-2 rtol = 1e-2
+    @test mean(states[:,2]) ≈ 0. atol = 1e-2 rtol = 1e-2
+    @test std(states[:,1]) ≈ 1. atol = 1e-2 rtol = 1e-2
+    @test std(states[:,2]) ≈ 1. atol = 1e-2 rtol = 1e-2
+end
+
+@testset "Test if BOOM kernel samples Gaussian correctly - VISUAL." begin
+    Random.seed!(2)
+    # Gaussian Example
+    function ∇U(x::Vector)
+        x
+    end
+
+    d = 2 
+    μ = zeros(d)
+    Σ = diagm(fill(1., d))
+    Σ_boom = diagm(fill(1., d))
+    λᵣ = 1.;    Δt = 0.5;    ΔM = 1
+
+    sampler = BOOM_coupling(∇U, Σ -Σ_boom, Σ_boom, μ, Δt, ΔM, λᵣ)
+    coupled_sampler = DiscretePDMPCoupling(sampler)
+
+    N = 500
+    coupled_state = coupled_sampler.init(randn(d), randn(d))
+    states_1 = Matrix{Float64}(undef, N, d);    states_2 = Matrix{Float64}(undef, N, d)
+    times_1 = Vector{Float64}(undef, N);    times_2 = Vector{Float64}(undef, N)
+    times_1[1] = coupled_state.state_1.z[1];    times_2[1] = coupled_state.state_2.z[1]
+    states_1[1,:] = coupled_state.state_1.z[2];    states_2[1,:] = coupled_state.state_2.z[2]
+    for i in 1:N
+        coupled_state = coupled_sampler.kernel(coupled_state) 
+        times_1[i] = coupled_state.state_1.z[1]
+        times_2[i] = coupled_state.state_2.z[1]
+        states_1[i,:] = coupled_state.state_1.z[2]
+        states_2[i,:] = coupled_state.state_2.z[2]
+    end
+
+    # coupled_state.coupled
+    # coupled_state.coupled_status
+    # inds = 1:(Int(ceil(coupled_state.coupled_status.stoch_time/Δt)+100))
+    # p1 = plot(times_1[inds],states_1[inds,1])
+    # plot!(times_2[inds],states_2[inds,1])
+
+    # p2 = plot(times_1[inds],states_1[inds,2])
+    # plot!(times_2[inds],states_2[inds,2])
+    # plot(p1,p2)
+
+    # plot(states_1[inds,1], states_1[inds,2])
+    # plot!(states_2[inds,1], states_2[inds,2])
+
+    #marginalkde(states[:,1], states[:,2])
+
+    @test mean(states[:,1]) ≈ 0. atol = 1e-2 rtol = 1e-2
+    @test mean(states[:,2]) ≈ 0. atol = 1e-2 rtol = 1e-2
+    @test std(states[:,1]) ≈ 1. atol = 1e-2 rtol = 1e-2
+    @test std(states[:,2]) ≈ 1. atol = 1e-2 rtol = 1e-2
+end
+
+
+@testset "Test if Boom coupled kernel samples Gaussian correctly." begin
+    Random.seed!(1234)
+    # Gaussian Example
+    d = 2
+    μ = Vector([1., .5])
+    
+    function ∇U(x::Vector)
+        x - μ
+    end
+    
+    function h(x)
+        return x[1], x[1]^2, x[end], x[end]^2 
+    end
+
+    Σ = diagm(fill(1., d))
+    Σ_boom = Σ
+    λᵣ = 1.;    Δt = 0.8;    ΔM = 1
+
+    sampler = BOOM_coupling(∇U, Σ - Σ_boom, Σ_boom, μ, Δt, ΔM, λᵣ, h, false)
+    coupled_sampler = DiscretePDMPCoupling(sampler)
+    
+    # Rhe Glynn Estimator Check
+    K = 4
+    M = 40
+    function one_estimator!(coupling_time, h_km, i_km)
+        x0 = randn(d) .+ 10;        x1 = randn(d) .+ 10
+        coupled_state = coupled_sampler.init(x0, x1)
+        τ, h_out, i_out = rhee_glynn(coupled_sampler.kernel, coupled_state, K, M, true)
+        h_km .= h_out
+        i_km .= i_out
+        coupling_time .= τ
+        return Nothing
+    end
+
+    # Can take a long time........
+    N = 50_000
+    coupling_times = zeros(Float64, N)
+    h_kms = zeros(Float64, N, 4)
+    i_kms = zeros(Float64, N, 4)
+    Threads.@threads for l in 1:N
+        one_estimator!(view(coupling_times, l), view(h_kms, l, :), view(i_kms, l, :))
+    end
+
+    #boxplot(h_kms[:, 2])
+    #boxplot(coupling_times,title="times")
+    #boxplot(i_kms[:, 2])
+
+    println("E[x[1]] Unbiased:",mean(h_kms[:, 1]), " True:", μ[1])
+    println("E[x[1]] Biased:",mean(i_kms[:, 1]))
+    println("E[x[end]] Unbiased:",mean(h_kms[:, 3]), " True:", μ[end])
+    println("E[x[end]] Biased:",mean(i_kms[:, 3]))
+    println("E[x[1]^2] Unbiased:",mean(h_kms[:, 2]), " True:", μ[1]^2+1)
+    println("E[x[1]^2] Biased:",mean(i_kms[:, 2]))
+    println("E[x[end]^2] Unbiased:",mean(h_kms[:, 4]), " True:", μ[end]^2+1)
+    println("E[x[end]^2] Biased:",mean(i_kms[:, 4]))
+
+    tol = 0.05
+    @test mean(h_kms[:, 1]) ≈ μ[1] atol = tol
+    @test mean(h_kms[:, 3]) ≈ μ[end] atol = tol
+    @test mean(h_kms[:, 2]) ≈ μ[1]^2 + 1.0 atol = tol
+    @test mean(h_kms[:, 4]) ≈ μ[end]^2 + 1.0 atol = tol
+end
+
+@testset "Test if Boom kernel samples Logistic - visual." begin
+    Random.seed!(1234)
+    # Logistic Example
+    X = Matrix(randn(100, 2))
+    param = Vector([1., 2.])
+    q = exp.(X*param)
+    Y = Vector(rand(100) .< (q./(1 .+ q)))
+    prior_precision = 1.
+    function ∇U(x::Vector)
+        μ = X*x
+        η_val = exp.(μ)
+        prior_terms = prior_precision * x 
+        ϕ = X .* (η_val ./(1 .+ η_val) .- Y)
+        grad = sum(ϕ, dims=1)[1,:] + prior_terms
+        return grad
+    end
+
+    d = size(X, 2)
+    Σ = prior_precision*diagm(fill(1., d))
+    H = (X' * X)/4 + Σ
+
+    λᵣ = 1.;    Δt = 0.8;    ΔM = 1
+    sampler = BOOM_coupling(∇U, H - Σ, Σ, param, Δt, ΔM, λᵣ)
+    coupled_sampler = DiscretePDMPCoupling(sampler)
+
+    state, _, _, _, _ = sampler.init(randn(d), randn(d))
+    
+    N = 10_000
+    states = Matrix{Float64}(undef, N, 2)
+    for i in 1:N
+        T_seq = (state[1] + Δt):Δt:(state[1] + Δt)
+        state, _, _ = sampler.kernel(state, T_seq, 0.0) 
+        states[i,:] = state[2]
+    end
+    #marginalkde(states[:,1], states[:,2])
+    #plot(states[:,1], states[:,2])
+
+    """ Check the coupled kernel """
+
+    coupled_state = coupled_sampler.init(randn(d), randn(d))
+    N = 200
+    states_1 = Matrix{Float64}(undef, N, d)
+    states_2 = Matrix{Float64}(undef, N, d)
+    states_1[1,:] = coupled_state.state_1.z[2]
+    states_2[1,:] = coupled_state.state_2.z[2]
+    for i in 2:N
+        coupled_state = coupled_sampler.kernel(coupled_state) 
+        states_1[i,:] = coupled_state.state_1.z[2]
+        states_2[i,:] = coupled_state.state_2.z[2]
+    end
+    cpl = coupled_state.coupled
+    plot(states_1[:,1], title = "Coupled: $cpl")
+    plot!(states_2[:,1])
+
+    plot(states_1[:,1], states_1[:,2])
+    plot!(states_2[:,1], states_2[:,2])
+end
+

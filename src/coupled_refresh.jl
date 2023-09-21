@@ -2,6 +2,21 @@ using Distributions: MvNormal, logpdf, rand, Exponential
 using LinearAlgebra: norm
 using Random: randn, rand
 
+function coupling_refresh(rate, shift, mode="independent")
+    # Coupling refreshment times 
+    if shift < 0. 
+        t_2, t_1, coupled = coupling(rate, -shift, mode)
+    else
+        t_1, t_2, coupled = coupling(rate, shift, mode)
+    end
+    return t_1, t_2, coupled
+end
+
+function coupling_bounce(thin_1::AffinePoisson, thin_2::AffinePoisson)
+    # Coupling bounce event (requires Affine coupling)
+    τb₁, τb₂, coupled = thorisson(thin_1, thin_2)
+    return τb₁, τb₂ - thin_2.shift, coupled
+end
 
 """
     coupled_next_refresh!(x₁, x₂, λ, v₁, v₂)
@@ -103,7 +118,6 @@ function reflection_maximal!(
     return coupled
 end
 
-
 """
     reflection_maximal(m, μ, σ)
 
@@ -119,4 +133,118 @@ function reflection_maximal(
     x, y = similar(m), similar(μ)
     cond = reflection_maximal!(m, μ, σ, x, y)
     return x, y, cond
+end
+
+"""
+    reflection_maximal(m, μ, Q_x, Q_x_inv, Q_y, res₁, res₂)
+Maximal coupling of multivariate Gaussians m, μ with Σₓ = QₓQₓᵀ Σ_y = Q_yQ_yᵀ
+
+```
+"""
+function reflection_maximal(
+    mx::AbstractVector{F}, 
+    my::AbstractVector{F}, 
+    Q_x::AbstractMatrix{F}, 
+    Q_x_inv::AbstractMatrix{F}, 
+    Q_y::AbstractMatrix{F}
+    ) where {F<:AbstractFloat}
+
+    # Get dimension
+    d = size(mx)[1]
+
+    # Get scaled difference
+    z = Q_x_inv*(mx - my)  # Q^{-1/2}(mx - my)
+    if mx ≈ my
+        e = sign.(z) 
+        norm_e = norm(e)
+        if norm_e != 0 
+            e ./= norm_e
+        else
+            e = 1/sqrt(d).* ones(d)
+        end
+    else
+        e = z ./ norm(z)
+    end
+
+    n = MvNormal(d, 1.0)
+    ε_x = rand(n)
+    log_u = log(rand())
+
+    z .+= ε_x
+    ℓₑ = logpdf(n, ε_x)
+    ℓₜ = logpdf(n, z)
+
+    coupled::Bool = log_u < (ℓₜ - ℓₑ)
+    
+    # Reuse z for memory efficiency
+    z .= coupled ? z : ε_x .- 2(ε_x'e)e
+
+    # Sample
+    x = mx .+ Q_x * ε_x
+    y = my .+ Q_y * z
+
+    return x, y, coupled
+end
+
+
+function lindvall_roger(mx, my, Q_x, Q_x_inv, Q_y)
+    # Get dimension
+    d = size(mx)[1]
+
+    # Get scaled difference
+    z = Q_x_inv*(mx - my)  # Q^{-1/2}(mx - my)
+    if mx ≈ my
+        e = sign.(z) 
+        norm_e = norm(e)
+        if norm_e != 0 
+            e ./= norm_e
+        else
+            e = 1/sqrt(d).* ones(d)
+        end
+    else
+        e = z ./ norm(z)
+    end
+
+    # Get x noise
+    eps_x = randn(d)
+
+    # Get y noise
+    eps_y = eps_x - 2 * dot(e, eps_x) * e  # eps_y = eps_x - 2<e, eps_x>e, the reflection. 
+    
+    # Sample
+    x = mx .+ Q_x * eps_y
+    y = my .+ Q_y * eps_x
+
+    return x, y, false
+end
+
+function lindvall_roger(mx, my, sigmax, sigmay)
+    # Get dimension
+    d = size(mx)[1]
+
+    # Get scaled difference
+    z = (mx - my) ./ sigmay  # Q^{-1/2}(mx - my)
+    if mx ≈ my
+        e = sign.(z) 
+        norm_e = norm(e)
+        if norm_e != 0 
+            e ./= norm_e
+        else
+            e = 1/sqrt(d).* ones(d)
+        end
+    else
+        e = z ./ norm(z)
+    end
+
+    # Get x noise
+    eps_x = randn(d)
+
+    # Get y noise
+    eps_y = eps_x - 2 * dot(e, eps_x) * e  # eps_y = eps_x - 2<e, eps_x>e, the reflection. 
+    
+    # Sample
+    x = mx .+ sigmax .* eps_x
+    y = my .+ sigmay .* eps_y
+
+    return x, y, false
 end

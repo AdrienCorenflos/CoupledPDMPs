@@ -13,15 +13,15 @@ using StatsPlots
     end
     d = 2
     H = diagm(fill(1., d))
-    λᵣ = 1.;    Δt = 1.
-    sampler = BPS_coupling(∇U, H, Δt, λᵣ, "antithetic")
+    λᵣ = 1.;    Δt = 2.;    ΔM=1
+    sampler = BPS_coupling(∇U, H, Δt, ΔM, λᵣ)
     state, _, _, _, _ = sampler.init(randn(d), randn(d))
     
     N = 100_000
     states = Matrix{Float64}(undef, N, 2)
     for i in 1:N
-        T_seq = [state[1] + 2.]
-        state, _, _ = sampler.kernel(state, T_seq, 1, undef) 
+        T_seq = (state[1] + Δt):Δt:(state[1] + Δt)
+        state, _, _ = sampler.kernel(state, T_seq, 0.0) 
         states[i,:] = state[2]
     end
     #marginalkde(states[:,1], states[:,2])
@@ -45,15 +45,15 @@ end
     end
     H = diagm(fill(1., d))
     λᵣ = 1.;    Δt = 1.; ΔM = 1
-    sampler = BPS_coupling(∇U, H, Δt, λᵣ, "antithetic")
-    coupled_sampler = DiscretePDMPCoupling(sampler, h)
+    sampler = BPS_coupling(∇U, H, Δt, ΔM, λᵣ, h, false)
+    coupled_sampler = DiscretePDMPCoupling(sampler)
     
     # Rhe Glynn Estimator Check
     K = 10
     M = 100
     function one_estimator!(coupling_time, h_km, i_km)
         x0 = randn(d) .+ 10;        x1 = randn(d) .+ 10
-        coupled_state = coupled_sampler.init(x0, x1, ΔM)
+        coupled_state = coupled_sampler.init(x0, x1)
         τ, h_out, i_out = rhee_glynn(coupled_sampler.kernel, coupled_state, K, M, true)
         h_km .= h_out
         i_km .= i_out
@@ -90,7 +90,8 @@ end
 @testset "Test if BPS kernel samples Logistic." begin
     Random.seed!(1234)
     # Logistic Example
-    X = Matrix(randn(100, 2))
+    d = 2
+    X = Matrix(randn(100, d))
     param = Vector([1., 2.])
     q = exp.(X*param)
     Y = Vector(rand(100) .< (q./(1 .+ q)))
@@ -104,58 +105,32 @@ end
         return grad
     end
 
-    d = size(X, 2)
-    H = (X' * X)/4 + prior_precision*Matrix{Float64}(I, d, d);
-    λᵣ = 1.;    Δt = 1.
-    sampler = BPS_coupling(∇U, H, Δt, λᵣ, "antithetic")
+    Σ = prior_precision*diagm(fill(1., d))
+    H = (X' * X)/4 + Σ
+
+    λᵣ = sqrt(d);    Δt = 1.;   ΔM=1
+    sampler = BPS_coupling(∇U, H, Δt, ΔM, λᵣ)
     state, _, _, _, _ = sampler.init(randn(d), randn(d))
     
     N = 10_000
     states = Matrix{Float64}(undef, N, d)
     for i in 1:N
-        T_seq = [state[1] + 2.]
-        state, _, _ = sampler.kernel(state, T_seq, 1, undef) 
+        T_seq = (state[1] + Δt):Δt:(state[1] + Δt)
+        state, _, _ = sampler.kernel(state, T_seq, 0.0) 
         states[i,:] = state[2]
     end
     #marginalkde(states[:,1], states[:,2])
-end
 
-
-@testset "Test if BPS coupled kernel works for Logistic (Visual Check)." begin
-    Random.seed!(1234)
-    # Logistic Example
-    X = Matrix(randn(100, 2))
-    param = Vector([1., 2.])
-    q = exp.(X*param)
-    Y = Vector(rand(100) .< (q./(1 .+ q)))
-    prior_precision = 1.
-    function ∇U(x::Vector)
-        μ = X*x
-        η_val = exp.(μ)
-        prior_terms = prior_precision * x 
-        ϕ = X .* (η_val ./(1 .+ η_val) .- Y)
-        grad = sum(ϕ, dims=1)[1,:] + prior_terms
-        return grad
-    end
-    function h(x)
-        return x
-    end
-    d = size(X, 2)
-    H = (X' * X)/4 + prior_precision*Matrix{Float64}(I, d, d);
-    λᵣ = 1.;    Δt = 2.
-
-    sampler = BPS_coupling(∇U, H, Δt, λᵣ, "antithetic")
-    coupled_sampler = DiscretePDMPCoupling(sampler, h)
-    coupled_state = coupled_sampler.init(randn(d), randn(d), 1)
+    coupled_sampler = DiscretePDMPCoupling(sampler)
+    coupled_state = coupled_sampler.init(randn(d), randn(d))
 
     # Get samples to check vis
-    N = 200
+    N = 500
     states_1 = Matrix{Float64}(undef, N, d)
     states_2 = Matrix{Float64}(undef, N, d)
     states_1[1,:] = coupled_state.state_1.z[2]
     states_2[1,:] = coupled_state.state_2.z[2]
     for i in 2:N
-        T_seq = [state[1] + 2.]
         coupled_state = coupled_sampler.kernel(coupled_state) 
         states_1[i,:] = coupled_state.state_1.z[2]
         states_2[i,:] = coupled_state.state_2.z[2]
@@ -166,5 +141,5 @@ end
 
     plot(states_1[:,1], states_1[:,2])
     plot!(states_2[:,1], states_2[:,2])
-end
 
+end

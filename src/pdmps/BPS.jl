@@ -3,24 +3,55 @@ include("pdmp.jl")
 BPS kernel 
 """
 
-function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, couple_mode::AbstractString = "independent")
+function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, ΔM::Int, λᵣ::Float64, h_::Function = (x) -> 0., continuous::Bool = false, couple_mode::AbstractString = "antithetic")
     
+    """ Estimator utility functions """
+
+    function h(x, v, t)
+        # Handelling different estimator types
+        if continuous
+            return h_(x, v, t)
+        else
+            return h_(x)
+        end
+    end
+    
+    function accumulate_h(h_val, x, v, t, time_seq, t_next)
+        # Accumulate h over time_seq from t to t_next
+        # Only use if no events from (x,v,t) to (x',v',t_next)
+
+        if continuous
+            h_val = map((u,v) -> (u + v / ΔM), h_val, h(x, v, t_next - t)) 
+        else
+            ind = findfirst( time_seq .> t)
+            while ind <= length(time_seq) && t_next >= time_seq[ind] 
+                x, v = dynamics(x, v, time_seq[ind]-t)
+                h_t = h(x, v, time_seq[ind]-t)
+                h_val = map((u,v) -> (u + v / ΔM), h_val, h_t) 
+                ind += 1
+            end
+        end
+        return h_val
+    end
+
     function get_thin(v::Vector, grad::Vector, H::Matrix, shift::Float64)
-        
-        # Set the thinning bound
+        # Update thinning bound based on a bound H for the hessian
+
         a = v'*H*v
         b = v'*grad
-    
         return AffinePoisson(a, b, 0.0, shift)
     end
 
-    # linear Dynamics
+
+    """ PDMP specific functions """
+    
     function dynamics(x, v, t)
+        # Linear dynamics
         return x + v*t, v
     end
 
-    ## Update v based on thinning
-    function thinning_update_v(v, grad, thin, τ, rand_unif = rand())
+    function bounce_thinning(v, grad, thin, τ, rand_unif = rand())
+        # Apply the bounce kernel with thinning
         switch_rate = v'*grad
         upper_bound = rate(thin, τ)
         if upper_bound  < switch_rate - 1e-8
@@ -33,60 +64,68 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
             return v
         end
     end
+    
+    function kernel(state, time_seq, h_val)
+        # BPS kernel move state along time_seq accumulating h_val
+        # Return new state, h_val and number of gradient evals
 
-    # BPS kernel Moves the state until stochastic time Tmax
-    function kernel(state, T_seq, M, h_val, h = (x) -> 0.)
+        num_event = 0
+        n_ind = length(time_seq)
         t, x, v, thin = state
+
+        # Get next bounce
         τr, τb = -log(rand()) / λᵣ, rand(thin)
         τb = τb - thin.shift 
         is_bounce = τb < τr
         τ = min(τr, τb)
+
         t_next = t + τ
-        num_event = 1
-        n_ind = length(T_seq)
+        
         for i in 1:n_ind
-            # Progress process untill next event time > next eval time
-            while(t_next < T_seq[i])
-                x += v*(t_next - t)
+            # Accumulate/move process untill next event > next time on time_seq
+            while(t_next < time_seq[i])
+                h_val = accumulate_h(h_val, x, v, t, time_seq, t_next)
+                x, v = dynamics(x, v, t_next-t)
                 t = t_next
-                if(is_bounce)
+                if is_bounce
                     num_event += 1
                     grad = ∇U(x)
-                    v = thinning_update_v(v, grad, thin, τ)
+                    v = bounce_thinning(v, grad, thin, τ)
                 else
                     num_event += 1
                     grad = ∇U(x)
                     v = randn(length(v))
                 end
-                thin = get_thin(v, grad, H, 0.0)
+                # Get next bounce
+                thin = get_thin(v, grad, H, thin.shift)
                 τr, τb = -log(rand()) / λᵣ, rand(thin)
-                τb = τb - thin.shift
+                τb = τb - thin.shift 
                 is_bounce = τb < τr
                 τ = min(τr, τb)
                 t_next = t + τ
             end
-            # Progress event to next eval time and accumulate h
-            if h_val == undef
-                h_t = h(x + v*(T_seq[i] - t))
-                h_val = map((u,v) -> (u + v / M), zeros(length(h_t)), h_t) #h(x + v*(T_seq[i] - t))/M
-            else
-                h_val = map((u,v) -> (u + v / M), h_val, h(x + v*(T_seq[i] - t))) #accumulate h
-            end
+            # Accumulate/move process to time_seq[i] 
+            h_val = accumulate_h(h_val, x, v, t, time_seq, time_seq[i])
+            x, v = dynamics(x, v, time_seq[i]-t)
+            thin = update_thin(thin, time_seq[i] - t) 
+            t = time_seq[i]
+            τ = t_next-t
         end
 
-        thin = update_thin(thin, T_seq[n_ind] - t)
-        x += v*(T_seq[n_ind] - t)
-        t = T_seq[n_ind]
+        # Update linear thinning to be valid at final time
         new_state = (t, x, v, thin)
         return new_state, h_val, num_event
     end
 
     function init(x₁::Vector, x₂::Vector)
+        # BPS Init coupled sampler 
+        # Progress Z1 by Δ
 
         t₁ = 0.0; t₂ = 0.0
         
+        # Try and couple velocities
         τr₁, τr₂, ref_coupled = coupling_refresh(λᵣ, Δt + t₂ - t₁, couple_mode)
-        v₁, v₂, ref_pos_coupled = lindvall_roger(x₁, x₂, τr₁, τr₂) # Try and couple velocities
+        v₁, v₂, ref_pos_coupled = lindvall_roger(x₁, x₂, τr₁, τr₂) 
         v₁ = (v₁- x₁) ./ τr₁; v₂ = (v₂ - x₂) ./ τr₂; 
 
         thin_1 = get_thin(v₁, ∇U(x₁), H,  0.0)
@@ -110,6 +149,7 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
     end
 
     function coupled_kernel(state_1, state_2, next_event_info::coupled_event_info, coupled_next, coupled)
+        
         t₁, x₁, v₁, thin_1 = state_1
         t₂, x₂, v₂, thin_2 = state_2
 
@@ -129,16 +169,10 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
 
             grad_1, grad_2 = ∇U(x₁), ∇U(x₂)
             common_u = rand()
-            # if(coupled)
-            #     println("t₁:", t₁," o v₁", v₁, " v₂ ", v₂, " ", v₁ == v₂)
-            # end
-            v₁ = thinning_update_v(v₁, grad_1, thin_1, τ₁, common_u)
-            v₂ = thinning_update_v(v₂, grad_2, thin_2, τ₂, common_u)
-            # if(coupled)
-            #     println("n v₁", v₁, " v₂ ", v₂, " ", v₁ == v₂)
-            # end
-            
-            # Compute next event times. We can do this after the event given they are only bounces
+
+            v₁ = bounce_thinning(v₁, grad_1, thin_1, τ₁, common_u)
+            v₂ = bounce_thinning(v₂, grad_2, thin_2, τ₂, common_u)
+
             thin_1 = get_thin(v₁, grad_1, H,  0.0)
             thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
             
@@ -160,10 +194,10 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
             x₂, v₂ = dynamics(x₂, v₂, τ₂)
 
             grad_1, grad_2 = ∇U(x₁), ∇U(x₂) 
-            v₁ = thinning_update_v(v₁, grad_1, thin_1, τ₁)
+
+            v₁ = bounce_thinning(v₁, grad_1, thin_1, τ₁)
             v₂ = randn(length(v₂))
 
-            # Compute next event times. We can do this after the event given they are only bounces
             thin_1 = get_thin(v₁, grad_1, H,  0.0)
             thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
             
@@ -185,7 +219,8 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
             x₂, v₂ = dynamics(x₂, v₂, τ₂)
 
             grad_1, grad_2 = ∇U(x₁), ∇U(x₂) 
-            v₂ = thinning_update_v(v₂, grad_2, thin_2, τ₂)
+
+            v₂ = bounce_thinning(v₂, grad_2, thin_2, τ₂)
             v₁ = randn(length(v₁))
             
             # Compute next event times. We can do this after the event given they are only bounces
@@ -220,8 +255,8 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
                 # τr₁ = τr₂
                 v₁, v₂, ref_pos_coupled = reflection_maximal(x₁, x₂, τr₁) 
             end
-            v₁ = (v₁- x₁) ./ τr₁; v₂ = (v₂ - x₂) ./ τr₂; 
 
+            v₁ = (v₁- x₁) ./ τr₁; v₂ = (v₂ - x₂) ./ τr₂; 
             grad_1, grad_2 = ∇U(x₁), ∇U(x₂) 
             thin_1 = get_thin(v₁, grad_1, H,  0.0)
             thin_2 = get_thin(v₂, grad_2, H, Δt + t₂ - t₁)
@@ -253,6 +288,5 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, c
 
         return state_1, state_2, next_event_info, coupled_next, coupled
     end
-
-    return coupled_pdmp(init, kernel, coupled_kernel, dynamics, Δt, λᵣ, couple_mode)
+    return coupled_pdmp(init, kernel, coupled_kernel, dynamics, λᵣ, Δt, ΔM, accumulate_h, h, couple_mode)
 end
