@@ -3,10 +3,9 @@ include("pdmp.jl")
 BPS kernel 
 """
 
-function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, ΔM::Int, λᵣ::Float64, h_::Function = (x) -> 0., continuous::Bool = false, couple_mode::AbstractString = "antithetic")
-    
-    """ Estimator utility functions """
+function BPS_coupling_ss(∇U::Function, H::Matrix, Δt::Float64, λᵣ::Float64, control_variate::Vector, couple_mode::AbstractString = "independent")
 
+    """ Estimator utility functions """
     function h(x, v, t)
         # Handelling different estimator types
         if continuous
@@ -34,14 +33,18 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, ΔM::Int, λᵣ::
         return h_val
     end
 
-    function get_thin(v::Vector, grad::Vector, H::Matrix, shift::Float64)
-        # Update thinning bound based on a bound H for the hessian
+    ## Thinning information for subsampling
 
+    grad_ref = ∇U(control_variate)
+
+    function get_thin(v::Vector, grad::Vector, H::Matrix, shift::Float64)
+        
+        # Set the thinning bound
         a = v'*H*v
-        b = v'*grad
+        b = v'*grad_ref + sqrt(a)*
+    
         return AffinePoisson(a, b, 0.0, shift)
     end
-
 
     """ PDMP specific functions """
     
@@ -111,7 +114,6 @@ function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, ΔM::Int, λᵣ::
             t = time_seq[i]
             τ = t_next-t
         end
-
         # Update linear thinning to be valid at final time
         new_state = (t, x, v, thin)
         return new_state, h_val, num_event

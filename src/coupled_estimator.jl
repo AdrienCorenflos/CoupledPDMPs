@@ -63,7 +63,7 @@ function rhee_glynn(
         throw(ArgumentError("k must be in [1, m]"))
     end
 
-    den = m - k
+    den = m - k + 1.0
     coupling_time = Inf
     # burnin
     for i in 1:k

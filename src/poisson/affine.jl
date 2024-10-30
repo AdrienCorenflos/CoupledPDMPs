@@ -45,7 +45,7 @@ function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T<:AbstractFloat}
     a, b, c, shift = d.a, d.b, d.c, d.shift
     logᵤ = log(rand(rng, T))
 
-    if isapprox(a, 0., atol=1e-10) # λ = (b)₊ + c
+    if isapprox(a, 0., atol=1e-18) # λ = (b)₊ + c
         return shift-logᵤ/(max(0.,b)+c)
 
     elseif (b < 0.0) & (a > 0.0)
@@ -85,9 +85,16 @@ function logpdf(d::AffinePoisson, x::Real)
     a, b, c, shift = d.a, d.b, d.c, d.shift
     x = x - shift
 
-    if x < 0.0
+    if isinf(x)
+        if (a <= 0.0) & (b <= 0.0) & (c <= 0.0)
+            return 0.0
+        else
+            throw(ArgumentError("AffinePoisson: x must be positive if one of a, b or c are positive"))
+        end
+    
+    elseif x < 0.0
         return -Inf
-    elseif isapprox(a, 0.0, atol = 1e-10)
+    elseif isapprox(a, 0.0, atol = 1e-18)
         # λ = (b)₊ + c 
         return log(max(0.0, b) + c) - (max(0.0, b) + c) * x
 

@@ -37,7 +37,7 @@ function coupling(rate::U, shift::U, mode::T = "independent")::Tuple{U, U, Bool}
     u = rand()
 
     coupled = u < mixture_weight
-    if u < mixture_weight
+    if coupled
         log_v = log(rand())
         t_1 = shift - log_v / rate
         t_2 = t_1
@@ -54,17 +54,19 @@ function coupling(rate::U, shift::U, mode::T = "independent")::Tuple{U, U, Bool}
         else
             error("Invalid mode.")
         end
+        vold = v
+        wold = w
         
         v *= (1 - mixture_weight)
         v = 1 - v
+        log_v = log(v)
 
         # This should perhaps be done in logspace
-        w *= 1 - mixture_weight
-        w /= (exp(rate * shift) - 1)
-        w = exp(-rate * shift) - w
-
-        log_v = log(v)
         log_w = log(w)
+        log_w += log(1 - mixture_weight)
+        log_w -= log(1-exp(-rate*shift)) + rate*shift
+        log_w = log(1 - exp(rate*shift + log_w)) - rate*shift
+
         t_1 = -log_v / rate
         t_2 = -log_w / rate
     end
