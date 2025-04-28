@@ -23,10 +23,10 @@ end
 
 # Set the thinning bound
 function update_thin(thin::AffinePoisson, t)
-    a = thin.a
+    a, c = thin.a, thin.c
     b = thin.a*t + thin.b # Assumes an affine bound
     shift = 0.0 # Assumes the updated thinning is time-coupled
-    return AffinePoisson(a, b, 0.0, shift)
+    return AffinePoisson(a, b, c, shift)
 end
 
 function DiscretePDMPCoupling(sampler::coupled_pdmp)

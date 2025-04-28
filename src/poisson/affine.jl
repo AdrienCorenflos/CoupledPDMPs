@@ -17,23 +17,29 @@ struct AffinePoisson{T<:AbstractFloat} <: PoissonProcess
     b::T
     c::T
     shift::T
-    AffinePoisson{T}(a::T, b::T, c::T, shift::T) where {T<:Real} = new{T}(a, b, c, shift)
+    scale::T
+    AffinePoisson{T}(a::T, b::T, c::T, shift::T, scale::T) where {T<:Real} = new{T}(a, b, c, shift, scale)
 end
 
 function AffinePoisson(a::T, b::T) where {T<:Real}
-    return AffinePoisson{T}(a, b, T(0.0), T(0.0))
+    return AffinePoisson{T}(a, b, T(0.0), T(0.0), T(1.0))
 end
 
 function AffinePoisson(a::T, b::T, c::T) where {T<:Real}
-    return AffinePoisson{T}(a, b, c, T(0.0))
+    return AffinePoisson{T}(a, b, c, T(0.0), T(1.0))
 end
 
-function AffinePoisson(a::T, b::T, c::T, shift::T; check_args::Bool = true) where {T<:Real}
+function AffinePoisson(a::T, b::T, c::T, shift::T) where {T<:Real}
+    return AffinePoisson{T}(a, b, c, shift, T(1.0))
+end
+
+function AffinePoisson(a::T, b::T, c::T, shift::T, scale::T; check_args::Bool = true) where {T<:Real}
     @check_args AffinePoisson -Inf < a < Inf
     @check_args AffinePoisson -Inf < b < Inf
     @check_args AffinePoisson 0.0 <= c < Inf
-    @check_args AffinePoisson -Inf <= shift < Inf
-    return AffinePoisson{T}(a, b, c, shift)
+    @check_args AffinePoisson -Inf < shift < Inf
+    @check_args AffinePoisson -Inf < scale < Inf
+    return AffinePoisson{T}(a, b, c, shift, scale)
 end
 
 ### Parameters
@@ -42,11 +48,11 @@ partype(::AffinePoisson{T}) where {T} = T
 ### Methods
 function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T<:AbstractFloat}
     # See ...
-    a, b, c, shift = d.a, d.b, d.c, d.shift
+    a, b, c, shift, scale = d.a, d.b, d.c, d.shift, d.scale
     logᵤ = log(rand(rng, T))
 
     if isapprox(a, 0., atol=1e-18) # λ = (b)₊ + c
-        return shift-logᵤ/(max(0.,b)+c)
+        return shift-logᵤ/(max(0.,b)+c)*scale
 
     elseif (b < 0.0) & (a > 0.0)
         t₀ = -b/a
@@ -54,27 +60,27 @@ function rand(rng::AbstractRNG, d::AffinePoisson{T}) where {T<:AbstractFloat}
 
         if t₁ < t₀ 
             # λ = c on (0,-b/a)      
-            return shift + t₁
+            return shift + t₁*scale
         else 
             # λ = (at+b)₊ + c on (-b/a, t) -> λ = (at)₊ + c on (0, t)
             t₂ = (-a * (b + c) + sqrt(a^2*(c^2-2*a*logᵤ+2*a*c*(b/a))))/a^2
-            return shift + t₂
+            return shift + t₂*scale
         end
 
     elseif (b > 0.0) & (a < 0.0)
         t₀ = -b/a
         if a*t₀^2/2.0+(b+c)*t₀ <= -logᵤ 
-            return shift + (b^2/(2*a) - logᵤ)/c
+            return shift + ((b^2/(2*a) - logᵤ)/c)*scale
         else 
             # λ = at+(b+c) on (0, -b/a)
-            return shift -(b+c)/a -sqrt((b+c)^2/a^2 - 2*logᵤ/a)
+            return shift + (-(b+c)/a -sqrt((b+c)^2/a^2 - 2*logᵤ/a))*scale
         end
 
-    elseif (a > 0.) & (b > 0.) # λ = at+(b+c) 
-        return shift -(b+c)/a + sqrt(((b+c)/a)^2 - 2*logᵤ/a)
+    elseif (a > 0.) & (b >= 0.) # λ = at+(b+c) 
+        return shift + (-(b+c)/a + sqrt(((b+c)/a)^2 - 2*logᵤ/a))*scale
         
     else # λ = c
-        return shift -logᵤ/c
+        return shift -logᵤ/c*scale
     end
 
 end
@@ -82,12 +88,13 @@ end
 
 function logpdf(d::AffinePoisson, x::Real)
     
-    a, b, c, shift = d.a, d.b, d.c, d.shift
-    x = x - shift
+    a, b, c, shift, scale = d.a, d.b, d.c, d.shift, d.scale
+    x = (x - shift)/scale
+    log_J = log(abs(scale))
 
     if isinf(x)
         if (a <= 0.0) & (b <= 0.0) & (c <= 0.0)
-            return 0.0
+            return 0 
         else
             throw(ArgumentError("AffinePoisson: x must be positive if one of a, b or c are positive"))
         end
@@ -96,7 +103,7 @@ function logpdf(d::AffinePoisson, x::Real)
         return -Inf
     elseif isapprox(a, 0.0, atol = 1e-18)
         # λ = (b)₊ + c 
-        return log(max(0.0, b) + c) - (max(0.0, b) + c) * x
+        return log(max(0.0, b) + c) - (max(0.0, b) + c) * x + log_J
 
     elseif (b < 0.0) & (a > 0.0) 
         # log Norm constant
@@ -104,14 +111,14 @@ function logpdf(d::AffinePoisson, x::Real)
 
         if x < -b / a
             # λ = c on (0,-b/a)      
-            return log(c) - c * x - lnc
+            return log(c) - c * x - lnc + log_J
         else
             # λ = (at+b) + c on (-b/a, t)
-            return log(a*x+b+c)-( -b*c/a+ (b+a*x)*(b + 2*c + a*x)/(2*a) ) - lnc
+            return log(a*x+b+c)-( -b*c/a+ (b+a*x)*(b + 2*c + a*x)/(2*a) ) - lnc + log_J
             #return log(a*x+b+c)-(a * x^2 / 2 + b * x + c * x + b*c/a+ b^2/(2*a)) - lnc
         end
 
-    elseif (b > 0.0) & (a < 0.0) # Issue
+    elseif (b > 0.0) & (a < 0.0) 
         # log Norm constant
         int1 =  erf((b + c)*im / sqrt(2 * -a))*im - erf(c*im / sqrt(2 * abs(a)))*im
         int2 = exp((b+c)^2/(2*a))
@@ -125,21 +132,21 @@ function logpdf(d::AffinePoisson, x::Real)
 
         if x < -b / a
             # λ = at+(b+c) on (0, -b/a)
-            return log(a*x+b+c) - (a * x^2 / 2 + b * x + c * x) - lnc
+            return log(a*x+b+c) - (a * x^2 / 2 + b * x + c * x) - lnc + log_J
         else
             # λ = c on (-b/a, inf)
-            return log(c) -c * x +b^2/(2*a) - lnc
+            return log(c) -c * x +b^2/(2*a) - lnc + log_J
         end
 
-    elseif (a > 0.0) & (b > 0.0) # λ = at+(b+c) 
-        return log(a * x + b + c) - (a * x^2 / 2 + (b + c) * x)
+    elseif (a > 0.0) & (b >= 0.0) # λ = at+(b+c) 
+        return log(a * x + b + c) - (a * x^2 / 2 + (b + c) * x) + log_J
 
     else
         # λ = c
         if c <= 0.0
             throw(ArgumentError("AffinePoisson: c must be positive if a = b = 0."))
         end
-        return log(c) - c * x
+        return log(c) - c * x + log_J
     end
 end
 rate(d::AffinePoisson, t::Real) = max(d.a * t + d.b, 0.) + d.c
