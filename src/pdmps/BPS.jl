@@ -1,10 +1,50 @@
 include("pdmp.jl")
+
 """
-BPS kernel 
-"""
+Coupled BPS kernel 
+"""  
+
+mutable struct BPS_coupled_status <: coupled_info
+    """ Coupled status for the current state of the sampler 
+    Also store information such as when the process couples and number of gradient evaluations
+    """
+    coupled::Bool
+    coupled_next::Bool
+    coupled_t::Bool
+    coupled_x::Bool
+    coupled_v::Bool
+    stoch_time::Float64
+
+    num_grad_1::Int
+    num_grad_2::Int
+    num_grad_coupled::Int
+
+    num_bounce_1::Int
+    num_bounce_2::Int
+    num_ref_1::Int
+    num_ref_2::Int
+    num_precoupled_1::Int
+    num_precoupled_2::Int
+end
+
+struct BPS_coupled_next_event
+    """ Event information for next coupled BPS
+    Next event times, bounce indicators, flags for coupled time, position and bounce
+    """
+    τ₁::Float64
+    τ₂::Float64
+    bounce₁::Bool
+    bounce₂::Bool
+    grad₁::Vector
+    grad₂::Vector
+    ref_coupled::Bool
+    ref_pos_coupled::Bool
+    b_coupled::Bool
+end
 
 function BPS_coupling(∇U::Function, H::Matrix, Δt::Float64, ΔM::Int, λᵣ::Float64, h_::Function = (x) -> 0., continuous::Bool = false, couple_mode::AbstractString = "antithetic")
     
+    println("BPS sampler with λᵣ = $λᵣ, Δ = $Δt")
     """ Estimator utility functions """
 
     function h(x, v, t)

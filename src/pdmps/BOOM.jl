@@ -1,9 +1,49 @@
 include("pdmp.jl")
+
 """
-Boomerang kernel
+Coupled Boomerang kernel
 """
 
-function BOOM_coupling(∇U::Function, H::Matrix, Σ::Matrix, xstar::Vector, Δt::Float64, ΔM::Int, λᵣ::Float64, h_::Function = (x) -> 0., continuous::Bool = false, couple_mode::AbstractString = "antithetic")
+mutable struct BOOM_coupled_status <: coupled_info
+    """ Coupled status for the current state of the sampler (not next event)
+    Also store information such as when the process couples and number of gradient evaluations
+    """
+    coupled::Bool
+    coupled_next::Bool
+    coupled_t::Bool
+    coupled_x::Bool
+    coupled_v::Bool
+    stoch_time::Float64
+
+    num_grad_1::Int
+    num_grad_2::Int
+    num_grad_coupled::Int
+    
+    num_bounce_1::Int
+    num_bounce_2::Int
+    num_ref_1::Int
+    num_ref_2::Int
+    num_precoupled_1::Int
+    num_precoupled_2::Int
+end
+
+struct next_event_coupled_BOOM
+    """ Event information for next coupled BPS
+    Next event times, bounce indicators, flags for coupled time, position and bounce
+    """
+    τ₁::Float64
+    τ₂::Float64
+    bounce₁::Bool
+    bounce₂::Bool
+    grad₁::Vector
+    grad₂::Vector
+    ref_coupled::Bool
+    ref_pos_coupled::Bool
+    b_coupled::Bool
+end
+
+
+function BOOM_coupling(∇U::Function, H, Σ, xstar::Vector, Δt::Float64, ΔM::Int, λᵣ::Float64, h_::Function = (x) -> 0., continuous::Bool = false, couple_mode::AbstractString = "antithetic")
 
     ## Calculate M1 and M2 to bound the Boomerang
     Σ_sqrt = sqrt(Σ)

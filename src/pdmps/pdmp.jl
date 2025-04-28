@@ -30,8 +30,7 @@ struct coupled_pdmp
     Δt::Float64
     ΔM::Int
     accumulate_h::Function
-    h::Function
-    couple_mode::AbstractString
+    get_next_event::Function
 end
 
 struct Kernel
@@ -42,6 +41,10 @@ struct Kernel
     kernel::Function
 end
 
+struct PDMPState 
+    z::Any
+    h::Any
+end
 
 function bounce(v, grad)
     nrm = norm(grad, 2)
