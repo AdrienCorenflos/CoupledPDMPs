@@ -61,3 +61,9 @@ function bounce(v, grad)
     end        
     return v - 2 * sum(e .* v) * e
 end
+
+function bounce(v, grad, Σ_sqrt)
+    sk_grad = Σ_sqrt'*grad
+    
+    return v - 2 * v'*grad /dot(sk_grad,sk_grad) * Σ_sqrt * sk_grad
+end
