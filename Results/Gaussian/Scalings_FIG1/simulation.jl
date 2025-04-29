@@ -48,7 +48,7 @@ function coupled_time!(res_out, discrete_sampler, p)
 end
 
 
-dt_values = [0.5,1, 2]
+dt_values = [0.4,1, 6]
 p_values = collect(10:10:100)
 N=500
 res_out_avg = zeros(Float64, length(dt_values), 5)
@@ -101,7 +101,7 @@ for i in 2:length(dt_values)
 end
 display(cp_BPS)
 
-dt_values = [5,2*pi, 10]
+dt_values = [4,2*pi, 20]
 p_values = collect(10:10:100)
 
 res_out_avg = zeros(Float64, length(dt_values), 5)
